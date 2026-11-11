@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#2b1d12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Dirt Road Derby: a top-down item-battle kart racer on Vermont back roads. Drift, boost and toss pinecones.">
+<title>Dirt Road Derby</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Barlow:wght@600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <button id="pauseBtn" class="pausebtn" aria-label="Pause" hidden><i></i><i></i></button>
+
+  <section id="title" class="screen">
+    <div class="logo">
+      <span class="l1">DIRT ROAD</span>
+      <span class="l2">DERBY</span>
+      <span class="flag" aria-hidden="true"></span>
+    </div>
+    <div class="tag">top-down item-battle kart racer</div>
+    <div class="grow"></div>
+    <div class="panel">
+      <button id="btnDaily" class="daily"></button>
+      <button id="btnRace" class="big primary">RACE!</button>
+      <div class="row3">
+        <button id="btnGP" class="mid">Grand Prix<small>4 tracks</small></button>
+        <button id="btnPick" class="mid">Pick track<small>single race</small></button>
+        <button id="btnTT" class="mid">Time trial<small>beat your ghost</small></button>
+      </div>
+      <div class="chips" id="clsChips"></div>
+      <div class="rigs" id="rigs"></div>
+      <div class="paints" id="paints"></div>
+      <div class="rigname" id="rigName"></div>
+      <div class="toggles" id="togglesTitle"></div>
+    </div>
+  </section>
+
+  <section id="select" class="screen" hidden>
+    <div class="selhead"><button id="selBack" class="back" aria-label="Back">‹</button><div class="selt"><h2 id="selHead">Pick a track</h2><div class="sub" id="selSub"></div></div><button id="selMirror" class="tg mirrortg">⇄ Mirror</button></div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section id="pause" class="screen dim" hidden>
+    <div class="card">
+      <h2>PAUSED</h2>
+      <button id="btnResume" class="big primary">RESUME</button>
+      <div class="row"><button id="btnRestart" class="mid">Restart</button><button id="btnQuit" class="mid">Quit</button></div>
+      <div class="toggles" id="togglesPause"></div>
+    </div>
+  </section>
+
+  <section id="results" class="screen dim" hidden>
+    <div class="card">
+      <canvas id="rsCar" class="rscar" width="480" height="200"></canvas>
+      <h2 id="rsHead" class="place">1st place</h2>
+      <div class="sub" id="rsTrack"></div>
+      <div class="table" id="rsTable"></div>
+      <div class="note" id="rsNote"></div>
+      <div class="unlock" id="rsUnlock" hidden></div>
+      <button id="btnShare" class="mid share" hidden>Share result</button>
+      <div class="table gp" id="rsGP" hidden></div>
+      <button id="btnAgain" class="big primary">RACE AGAIN</button>
+      <button id="btnPodium" class="big" hidden>PODIUM</button>
+      <div class="row"><button id="btnNext" class="mid">Next track ›</button><button id="btnMenu" class="mid">Menu</button></div>
+    </div>
+  </section>
+
+  <section id="podium" class="screen" hidden>
+    <div class="podspace"></div>
+    <div class="card">
+      <h2 id="pdHead">CHAMPION!</h2>
+      <div class="sub" id="pdSub"></div>
+      <div class="table" id="pdTable"></div>
+      <button id="pdAgain" class="big primary">NEW CUP</button>
+      <div class="row"><button id="pdMenu" class="mid">Menu</button></div>
+    </div>
+  </section>
+
+  <section id="loading" class="screen dim" hidden>
+    <div class="loadcard">Grading the road…</div>
+  </section>
+</div>
+<div id="probe"></div>
+<script src="tracks.js"></script>
+<script src="sim.js"></script>
+<script src="art.js"></script>
+<script src="audio.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
