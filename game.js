@@ -68,7 +68,7 @@
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     stage.style.width = cw + 'px'; stage.style.height = ch + 'px';
     canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
-    UI.z0 = ch >= cw ? Math.min(cw / 360, ch / 450) : Math.min(cw / 405, ch / 470);
+    UI.z0 = ch >= cw ? Math.min(cw / 325, ch / 450) : Math.min(cw / 405, ch / 470);
     UI.portrait = ch >= cw;
     // rotating: held fingers' coordinates mean something else now, so drop them; a toolbar height change keeps them
     if (wasPortrait !== undefined && wasPortrait !== UI.portrait) ptrs.clear();
@@ -83,13 +83,8 @@
     if (save.steer === 'tap') {
       b.driftL = { x: ins.l + 16 + R, y: ch - pb - R, r: R, role: 'drift', label: 'DRIFT' };
       b.driftR = { x: cw - ins.r - 16 - R, y: ch - pb - R, r: R, role: 'drift', label: 'DRIFT' };
-      if (UI.portrait) {
-        b.item = { x: cw / 2, y: ch - pb - R * 0.86, r: R * 0.86, role: 'item', label: 'ITEM' };
-        b.brake = { x: cw / 2, y: b.item.y - b.item.r - 34, r: 25, role: 'brake', label: 'BRAKE' };
-      } else { // landscape: keep the middle clear for the car
-        b.item = { x: b.driftR.x - R * 0.15, y: b.driftR.y - R - R * 0.86 - 12, r: R * 0.86, role: 'item', label: 'ITEM' };
-        b.brake = { x: b.driftL.x, y: b.driftL.y - R - 40, r: 26, role: 'brake', label: 'BRAKE' };
-      }
+      if (UI.portrait) b.item = { x: cw / 2, y: ch - pb - R * 0.86, r: R * 0.86, role: 'item', label: 'ITEM' };
+      else b.item = { x: b.driftR.x - R * 0.15, y: b.driftR.y - R - R * 0.86 - 12, r: R * 0.86, role: 'item', label: 'ITEM' }; // landscape: keep the middle clear for the car
     } else {
       b.drift = { x: cw - ins.r - 16 - R * 1.08, y: ch - pb - R * 1.08, r: R * 1.08, role: 'drift', label: 'DRIFT' };
       b.item = { x: b.drift.x - R * 0.35, y: b.drift.y - R * 1.08 - R * 0.86 - 18, r: R * 0.86, role: 'item', label: 'ITEM' };
@@ -171,18 +166,31 @@
   window.addEventListener('blur', () => { G.kb = { l: 0, r: 0, d: 0, drift: 0 }; ptrs.clear(); if (G.screen === 'race' && !(window.__T && window.__T.noPause)) pauseGame(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (G.screen === 'race' && !(window.__T && window.__T.noPause)) pauseGame(); A.suspend(); } else A.resume(); });
 
+  // thumb steering: how far the thumb sits from the middle line is how hard you turn.
+  // 8 px dead zone in the middle; ~108 px out (x <= 87 or x >= 303 on a 390 px phone) is full lock.
+  function thumbSteer(x) {
+    const span = Math.max(100, Math.min(170, cw * 0.256)), dx = x - cw / 2, u = clamp((Math.abs(dx) - 8) / span, 0, 1);
+    return Math.sign(dx) * u * (0.55 + 0.45 * u);
+  }
   function readControls() {
     const R = G.race, p = R && R.player; if (!p) return;
-    let steer = 0, drift = false, brake = false, analog = false, newest = -1, driftSide = 0, driftNewest = -1;
+    const tap = save.steer === 'tap';
+    let steer = 0, drift = false, brake = false, analog = false, newest = -1, driftSide = 0, driftNewest = -1, sideL = false, sideR = false;
     for (const q of ptrs.values()) {
-      if (q.role === 'drift') { drift = true; if (q.alsoSteer && q.t > newest) { newest = q.t; steer = q.x < cw / 2 ? -1 : 1; } else if (q.t > driftNewest && q.btn && save.steer === 'tap') { driftNewest = q.t; driftSide = q.btn.key === 'driftL' ? -1 : 1; } }
+      if (q.role === 'drift') { drift = true; if (q.alsoSteer && q.t > newest) { newest = q.t; steer = tap ? thumbSteer(q.x) : q.x < cw / 2 ? -1 : 1; analog = tap; } else if (q.t > driftNewest && q.btn && tap) { driftNewest = q.t; driftSide = q.btn.key === 'driftL' ? -1 : 1; } }
       else if (q.role === 'brake') brake = true;
-      else if (q.role === 'steer' && q.t > newest) {
-        newest = q.t;
-        if (save.steer === 'drag') { steer = clamp((q.x - q.x0) / 46, -1, 1); analog = true; }
-        else steer = q.x < cw / 2 ? -1 : 1;
+      else if (q.role === 'steer') {
+        if (q.x < cw / 2) sideL = true; else sideR = true;
+        if (q.t > newest) {
+          newest = q.t;
+          if (tap) steer = thumbSteer(q.x); else steer = clamp((q.x - q.x0) / 46, -1, 1);
+          analog = true;
+        }
       }
     }
+    // both thumbs down on opposite halves = brake, then reverse (after a 0.35 s grace, so rolling from one thumb to the other in an S-bend doesn't brake)
+    if (tap && sideL && sideR) { if (G.bothT == null) G.bothT = R.t; if (R.t - G.bothT > 0.35) { brake = true; steer = 0; analog = false; } }
+    else G.bothT = null;
     if (G.kb.l || G.kb.r) { steer = (G.kb.r ? 1 : 0) - (G.kb.l ? 1 : 0); analog = false; }
     if (G.kb.drift) drift = true;
     if (G.kb.d) brake = true;
@@ -215,7 +223,7 @@
     if (G.race.player) G.race.player.skin = ART.paintKey(save.rig, paintOk(save.paint) ? save.paint : 0);
     if (G.demo) { G.race.countdown = 0.01; }
     G.parts = []; G.pops = []; G.banner = null; G.timeScale = 1; G.slowT = 0; G.hitPause = 0; G.acc = 0; G.flash = 0; G.shake = 0;
-    G.resultsQueued = false; G.wrongT = 0; G.finishShownT = 0; G.photo = false; G.photoDone = false; G.prompt = null; G.itemShake = 0;
+    G.resultsQueued = false; G.wrongT = 0; G.finishShownT = 0; G.photo = false; G.photoDone = false; G.prompt = null; G.itemShake = 0; G.itemName = null; G.lapDelta = null; G.bothT = null;
     G.wheels = G.race.cars.map(() => null);
     G.virt = null; ptrs.clear(); G.kb = { l: 0, r: 0, d: 0, drift: 0 };
     const focus = G.race.player || G.race.cars[0];
@@ -228,9 +236,9 @@
     G.ghostLapStart = 0; G.lastSplit = null;
     buildMinimap();
     initWeather();
-    G.introT = G.demo || G.racedOnce ? 0 : 1.2; // brief fly-in before the countdown, first race of the session only
+    G.introT = G.demo || G.racedOnce ? 0 : 0.8; // brief fly-in before the countdown, first race of the session only
     if (!G.demo) G.racedOnce = true;
-    if (!G.demo) G.race.countdown = 3.0 + 0.0;
+    if (!G.demo) G.race.countdown = 3 * DRD.CD_STEP + DT; // 3, 2, 1 at 0.7 s each (the extra step makes the 3 show)
     G.hintT = 0;
   }
 
@@ -245,18 +253,18 @@
       const near = c ? camDist(c.x, c.y) < 420 : (e.x != null ? camDist(e.x, e.y) < 420 : false);
       const audible = !G.demo && (mine || near);
       switch (e.t) {
-        case 'count': if (!G.demo) { A.count(e.n); G.banner = { text: String(e.n), t: 0, dur: 0.9, big: true }; } break;
+        case 'count': if (!G.demo) { A.count(e.n); G.banner = { text: String(e.n), t: 0, dur: 0.7, big: true }; } break;
         case 'go': if (!G.demo) { A.go(); G.banner = { text: 'GO!', t: 0, dur: 0.9, big: true, col: '#ffd34d' }; buzz(25); A.applyMusic(true, 'race'); } break;
         case 'crate': burst(e.x, e.y, 'splinter', 14); if (audible) A.crate(); if (mine) buzz(12); break;
         case 'roulette': break;
-        case 'gotItem': if (mine && !G.demo) { A.gotItem(); G.itemPop = 0.4; if (!save.hints.item) G.prompt = { text: 'Tap ITEM to use it!', t: 0, dur: 3, btn: 'item' }; } break;
+        case 'gotItem': if (mine && !G.demo) { A.gotItem(); G.itemPop = 0.4; G.itemName = { text: (e.n > 1 ? e.n + ' × ' : '') + ITEM_NAMES[e.item], t: 0 }; if (!save.hints.item) G.prompt = { text: 'Tap ITEM to use it!', t: 0, dur: 3, btn: 'item' }; } break;
         case 'useItem': if (audible) { if (e.item === 'donut') A.boost(1); else if (e.item === 'pine' || e.item === 'snow') A.throw(); else A.thump(); }
           if (mine) { save.hints.item = true; if (G.prompt && G.prompt.btn === 'item') G.prompt = null; }
-          if (e.item === 'donut' && c) { for (let i = 0; i < 10; i++) part(c.x, c.y, 'sugar'); if (mine) { G.kick = 0.8; G.shake = Math.max(G.shake, 3); pop(c, 'CIDER DONUT!', '#ffcf6a'); } }
+          if (e.item === 'donut' && c) { for (let i = 0; i < 10; i++) part(c.x, c.y, 'sugar'); if (mine) { G.kick = 0.8; G.shake = Math.max(G.shake, 3); } }
           break;
         case 'hop': if (mine) A.hop(); break;
         case 'rocket': if (mine) { A.boost(2); G.shake = Math.max(G.shake, 5); G.kick = 1; pop(c, 'ROCKET START!', '#ffd34d'); buzz(30); save.hints.rocket = (save.hints.rocket || 0) + 1; persist(); for (let i = 0; i < 16; i++) part(c.x - Math.cos(c.h) * 18, c.y - Math.sin(c.h) * 18, Math.random() < 0.5 ? 'orange' : 'smoke'); } break;
-        case 'bog': if (mine) { A.bog(); pop(c, 'WHEELSPIN!', '#ff8a6a'); for (let i = 0; i < 14; i++) part(c.x - Math.cos(c.h) * 16, c.y - Math.sin(c.h) * 16, 'smoke', null, null, { size: 5, life: 0.9 }); } break;
+        case 'bog': if (mine) { A.bog(); for (let i = 0; i < 14; i++) part(c.x - Math.cos(c.h) * 16, c.y - Math.sin(c.h) * 16, 'smoke', null, null, { size: 5, life: 0.9 }); } break;
         case 'draft': if (mine) { A.draft(); pop(c, 'SLIPSTREAM', '#cfeaff'); } break;
         case 'driftStart': break;
         case 'driftTier': if (mine) { A.driftTier(e.tier); buzz(6); } break;
@@ -267,18 +275,18 @@
           else if (e.item === 'hay') { burst(e.x, e.y, 'hay', 22); if (audible) A.thump(); }
           else if (e.item === 'pine') { burst(e.x, e.y, 'pine', 10); if (audible) A.knock(); }
           else { burst(e.x, e.y, 'snow', 22); if (audible) A.puff(); }
-          if (P && e.by === P.i && !mine && !G.demo) { pop(c, 'GOTCHA!', '#ffe27a'); buzz(20); }
+          if (P && e.by === P.i && !mine && !G.demo) buzz(20);
           if (mine) { G.flash = 0.25; G.flashCol = 'rgba(255,90,60,'; const by = e.by != null && R.cars[e.by]; if (by && by !== c && !G.demo) pop(c, by.name + ' got you!', '#ff9a7a'); }
           break;
         case 'poof': burst(e.x, e.y, e.item === 'snow' ? 'snow' : e.item === 'hay' ? 'hay' : e.item === 'syrup' ? 'syrup' : 'pine', 10); if (near && !G.demo) A.puff(); break;
         case 'pineBounce': if (near && !G.demo) A.knock(); break;
         case 'wall': if (audible) A.wall(e.v); burst(e.x, e.y, R.T.season === 'winter' ? 'snow' : 'dust', 6); if (mine) { G.shake = Math.max(G.shake, Math.min(5, e.v / 60)); buzz(10); } break;
         case 'bump': if (audible) A.bump(e.v); burst(e.x, e.y, 'spark', 6); if (mine || (P && e.other === P.i)) { G.shake = Math.max(G.shake, Math.min(4, e.v / 70)); buzz(12); } break;
-        case 'tractorHit': if (audible) A.thump(); if (mine) { G.shake = 7; G.hitPause = 0.08; buzz(50); pop(c, 'MOO-VE OVER!', '#fff'); } break;
-        case 'heave': if (mine) { A.heave(e.big); G.shake = Math.max(G.shake, e.big ? 4 : 2); if (e.big) pop(c, 'AIR!', '#fff'); } if (c) burst(c.x, c.y, R.T.season === 'winter' ? 'snow' : 'dust', e.big ? 10 : 4); break;
+        case 'tractorHit': if (audible) A.thump(); if (mine) { G.shake = 7; G.hitPause = 0.08; buzz(50); } break;
+        case 'heave': if (mine) { A.heave(e.big); G.shake = Math.max(G.shake, e.big ? 4 : 2); } if (c) burst(c.x, c.y, R.T.season === 'winter' ? 'snow' : 'dust', e.big ? 10 : 4); break;
         case 'land': if (mine) { A.land(); G.shake = Math.max(G.shake, 4); buzz(25); } if (c) burst(c.x, c.y, R.T.season === 'winter' ? 'snow' : 'dust', 12); break;
-        case 'tow': if (mine) { A.tow(); pop(c, 'TOWED BACK', '#fff'); } if (c) burst(c.x, c.y, 'dust', 16); break;
-        case 'lap': if (mine) { A.lap(e.final); if (e.final) A.musicMood('final'); G.banner = { text: e.final ? 'FINAL LAP!' : 'LAP ' + e.lap, t: 0, dur: 1.6, col: e.final ? '#ff8a3d' : '#fff', sub: fmt(e.time) }; lapGhost(c, e.time); } break;
+        case 'tow': if (mine) A.tow(); if (c) burst(c.x, c.y, 'dust', 16); break;
+        case 'lap': if (mine) { A.lap(e.final); if (e.final) A.musicMood('final'); G.banner = { text: e.final ? 'FINAL LAP!' : 'LAP ' + e.lap, t: 0, dur: 1.6, col: e.final ? '#ff8a3d' : '#fff', sub: fmt(e.time) }; lapGhost(c, e.time); lapDelta(c, e.time); } break;
         case 'finish': if (mine) onPlayerFinish(e); break;
         case 'place': if (mine && !G.demo && R.raceT > 3) { A.pass(e.to < e.from); if (R.cars.some((q) => q !== c && camDist(q.x, q.y) < 90 && Math.hypot(q.x - c.x, q.y - c.y) < 70)) A.whoosh(e.to < e.from); if (e.to < e.from) G.placePop = 0.5; } break;
         case 'done': break;
@@ -288,6 +296,7 @@
   }
 
   // ------------------------------------------------------------ particles
+  const ITEM_NAMES = { syrup: 'Syrup slick', donut: 'Cider donut', pine: 'Pinecone', snow: 'Snowball', hay: 'Hay bale' };
   const PCOL = {
     mud: ['#4a3220', '#5e4229', '#6e5034'], dust: ['#b39470', '#c9ad86', '#9c7d5a'], snow: ['#ffffff', '#e8f2fa', '#cfe0ee'], leaf: ['#d9531e', '#e8862a', '#f2b632', '#b8321f'],
     splinter: ['#c99a5c', '#a06a32', '#e2bd85', '#c6281c'], syrup: ['#d98a1d', '#b8640f', '#f0b04a'], hay: ['#f0cf6a', '#d9b34a', '#b88f2c'], pine: ['#8a5228', '#a8682f', '#5a3416'],
@@ -301,7 +310,7 @@
       life: 0, max: (opt && opt.life) || 0.5 + Math.random() * 0.5, size: (opt && opt.size) || (2 + Math.random() * 3), col: cols[Math.floor(Math.random() * cols.length)], type, rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 12 });
   }
   function burst(x, y, type, n) { if (x == null || camDist(x, y) > 900) return; for (let i = 0; i < n; i++) part(x, y, type, null, null, { sp: 60 + Math.random() * 160, vz: 60 + Math.random() * 120, size: type === 'splinter' || type === 'hay' ? 2.5 + Math.random() * 3 : null }); }
-  function pop(c, text, col) { const busy = G.pops.filter((q) => q.t < 0.6).length; G.pops.push({ x: c.x, y: c.y, text, col: col || '#fff', t: 0, dy: busy * 24 }); } // stack, don't overlap
+  function pop(c, text, col) { if (G.demo) return; G.pops = [{ text, col: col || '#fff', t: 0 }]; } // one at a time, drawn beside your car (never on the road ahead)
 
   function updateParts(dt) {
     for (const p of G.parts) {
@@ -362,9 +371,13 @@
       }
     }
     // drift sparks by tier
-    if (c.drifting && c.driftTier > 0 && Math.random() < 0.9) {
-      const w = rw[c.driftDir > 0 ? 1 : 0];
-      part(w[0], w[1], c.driftTier === 2 ? 'red' : 'gold', c.vx * 0.2 + (Math.random() - 0.5) * 90, c.vy * 0.2 + (Math.random() - 0.5) * 90, { vz: 60 + Math.random() * 60, life: 0.25 + Math.random() * 0.15, size: 1.6 + Math.random() * 1.6 });
+    // drift sparks grow with the charge: a few pale ones while it builds, gold at tier 1, a red stream at tier 2
+    if (c.drifting) {
+      const ch2 = clamp(c.driftT / DRD.DRIFT_T2, 0, 1), cnt = c.driftTier === 2 ? 2 : c.driftTier === 1 ? 1 : (Math.random() < ch2 * 0.8 ? 1 : 0);
+      for (let q = 0; q < cnt; q++) {
+        const w = rw[c.driftDir > 0 ? 1 : 0];
+        part(w[0], w[1], c.driftTier === 2 ? 'red' : c.driftTier === 1 ? 'gold' : 'sugar', c.vx * 0.2 + (Math.random() - 0.5) * 90, c.vy * 0.2 + (Math.random() - 0.5) * 90, { vz: 60 + Math.random() * 60, life: 0.22 + Math.random() * 0.15 + ch2 * 0.08, size: (c.driftTier ? 1.6 : 1.1) + Math.random() * 1.4 + ch2 * 0.6 });
+      }
     }
     // boost flames + smoke
     if (c.boostT > 0 && Math.random() < 0.8) part(c.x - fx * 18, c.y - fy * 18, Math.random() < 0.6 ? 'orange' : 'smoke', c.vx * 0.3 - fx * 80 + (Math.random() - 0.5) * 40, c.vy * 0.3 - fy * 80 + (Math.random() - 0.5) * 40, { vz: 10, life: 0.3 + Math.random() * 0.2, size: 3 + Math.random() * 3 });
@@ -399,11 +412,22 @@
     return { x: lerp(a[1], b[1], u), y: lerp(a[2], b[2], u), h: a[3] + wrapA(b[3] - a[3]) * u, rig: g.rig };
   }
 
+  // lap 2 and 3: your lap against your best lap on this track and class (time trial: against the ghost lap)
+  function lapDelta(c, lapTime) {
+    if (G.demo || c.lapTimes.length < 2) return; // lap 1 is a standing start
+    if (G.mode === 'tt') { if (G.lastSplit && G.lastSplit.d != null) G.lapDelta = { d: G.lastSplit.d, t: 0 }; return; }
+    const b = save.best[G.T.id + '_' + G.race.cls.id];
+    let ref = b && b.lap ? b.lap : Infinity;
+    for (let i = 1; i < c.lapTimes.length - 1; i++) ref = Math.min(ref, c.lapTimes[i]);
+    if (isFinite(ref)) G.lapDelta = { d: lapTime - ref, t: 0 };
+  }
+
   // ------------------------------------------------------------ finish, results
   function onPlayerFinish(e) {
     const R = G.race, p = R.player;
     p.auto = true; // cool-down lap on autopilot
     if (G.mode === 'tt') lapGhost(p, p.lapTimes[p.lapTimes.length - 1]); // the final lap counts for the ghost too
+    lapDelta(p, p.lapTimes[p.lapTimes.length - 1]);
     A.finish(e.place); if (e.place <= 3 && G.mode !== 'tt') setTimeout(() => A.cheer(e.place === 1), 250);
     G.banner = { text: G.mode === 'tt' ? 'FINISH!' : ordinal(e.place).toUpperCase() + '!', t: 0, dur: 2.6, big: true, col: e.place === 1 ? '#ffd34d' : e.place <= 3 ? '#fff' : '#d6c6b0', sub: fmt(e.time) };
     buzz(e.place === 1 ? [40, 60, 40] : 30);
@@ -431,15 +455,26 @@
       if (!b.time || time < b.time) { if (b.time) rec = 'New best time!'; b.time = time; }
       if (!b.place || place < b.place) b.place = place;
       if (!b.lap || bestLap < b.lap) b.lap = bestLap;
+      const md = DRD.medal(T.id, R.cls.id === 'sunday' ? 0 : R.cls.id === 'commuter' ? 1 : 2, time);
+      const rank = md && md.medal ? ['gold', 'silver', 'bronze'].indexOf(md.medal) : 9;
+      if (b.medal == null || rank < b.medal) b.medal = rank;
       save.best[key] = b;
+      G.medalRes = md;
     } else {
       const b = save.tt[T.id] || {};
       if (!b.total || time < b.total) { if (b.total) rec = 'New best race time!'; b.total = time; }
       save.tt[T.id] = b;
     }
+    // promotion: a win moves you up a class, two last places in a row move you down one (single races)
+    let promo = '';
+    if (G.mode === 'single' && R.cls.id === DRD.CLASSES[save.cls].id) {
+      if (place === 1 && save.cls < DRD.CLASSES.length - 1) { save.cls++; save.lastSix = 0; promo = 'PROMOTED: ' + DRD.CLASSES[save.cls].name.toUpperCase(); }
+      else if (place === R.cars.length) { save.lastSix = (save.lastSix || 0) + 1; if (save.lastSix >= 2 && save.cls > 0) { save.cls--; save.lastSix = 0; promo = 'Next race: ' + DRD.CLASSES[save.cls].name + ' (win it to move back up)'; } }
+      else save.lastSix = 0;
+    }
     let unlock = '';
-    if (!isTT && place === 1) { save.wins = (save.wins || 0) + 1; const np = DRD.PAINTS.find((P) => P.need === save.wins); if (np) unlock = 'NEW PAINT: ' + np.name + '! Pick it on the title screen.'; }
-    if (!isTT && place === 1 && R.cls.id !== 'sunday' && !save.mirror) { save.mirror = true; unlock = (unlock ? unlock + '\n' : '') + 'NEW: Mirror roads unlocked! Find them under Pick track.'; }
+    if (!isTT && place === 1) { save.wins = (save.wins || 0) + 1; const np = DRD.PAINTS.find((P) => P.need === save.wins); if (np) unlock = 'NEW PAINT: ' + np.name + '! Pick it in the Garage.'; }
+    if (!isTT && place === 1 && R.cls.id !== 'sunday' && !save.mirror) { save.mirror = true; unlock = (unlock ? unlock + '\n' : '') + 'NEW: Mirror roads unlocked! Find them under Modes › Pick track.'; }
     let dailyLine = '';
     G.share = null;
     if (G.mode === 'daily') {
@@ -480,6 +515,14 @@
     const tb = save.tt[T.id];
     $('rsNote').textContent = [rec || (isTT ? (tb && tb.lap ? 'Best lap ' + fmt(tb.lap) + (G.ghost ? ' · ghost saved' : '') : '') : 'Best lap ' + fmt(bestLap)), dailyLine].filter(Boolean).join('\n');
     $('rsNote').className = 'note' + (rec ? ' rec' : '');
+    { const md = !isTT ? G.medalRes : null; let html = '';
+      if (md) {
+        const nm = (k) => k[0].toUpperCase() + k.slice(1);
+        if (md.medal) html = `<span class="medal ${md.medal}"></span>${nm(md.medal)} medal` + (md.next ? ` <span class="gap">· ${md.next.gap.toFixed(1)} s off ${md.next.name}</span>` : '!');
+        else html = `<span class="gap">${md.next.gap.toFixed(1)} s off a bronze medal</span>`;
+      }
+      if (promo) html += (html ? '<br>' : '') + `<span class="promo">${promo}</span>`;
+      $('rsMedal').innerHTML = html; $('rsMedal').hidden = !html; G.medalRes = null; }
     $('rsUnlock').textContent = unlock; $('rsUnlock').hidden = !unlock;
     const gpDone = G.mode === 'gp' && G.gp.round >= 4;
     $('btnAgain').hidden = G.mode === 'gp'; $('btnAgain').textContent = G.mode === 'daily' ? 'PRACTICE' : 'RACE AGAIN';
@@ -523,7 +566,7 @@
     G.screen = 'title'; G.mode = 'single';
     startRace({ demo: true, track: Math.floor(Math.random() * 4), cls: 1 });
     G.screen = 'title';
-    show('title'); renderTitle();
+    show('title'); showPanel('panMain'); renderTitle();
     A.applyMusic(false); A.applyMusic(true, 'title');
   }
   function launch(opts) {
@@ -566,13 +609,18 @@
       pr.appendChild(b);
     });
     $('rigName').textContent = DRD.RIGS[save.rig].name + (DRD.RIGS[save.rig].type === 'pickup' ? ' · heavier, shoves harder' : ' · grippier in corners');
+    $('raceCls').textContent = DRD.CLASSES[save.cls].name;
+    $('garageSub').textContent = DRD.CLASSES[save.cls].name + ' · ' + DRD.RIGS[save.rig].name.split(' ')[0];
     syncToggles();
   }
+  // title sub-panels: Modes (GP / pick track / time trial) and Garage (class, car, paint, toggles)
+  function showPanel(id) { ['panMain', 'panModes', 'panGarage'].forEach((p) => { $(p).hidden = p !== id; }); }
   function syncToggles() {
     ['togglesTitle', 'togglesPause'].forEach((id) => {
       const el = $(id); el.innerHTML = '';
-      [['sound', 'Sound'], ['music', 'Music'], ['steer', save.steer === 'tap' ? 'Steer: tap sides' : 'Steer: drag'], ['buzz', 'Buzz']].forEach(([k, label]) => {
+      [['sound', 'Sound'], ['music', 'Music'], ['steer', save.steer === 'tap' ? 'Steer: thumb' : 'Steer: drag'], ['buzz', 'Buzz']].forEach(([k, label]) => {
         if (k === 'buzz' && !navigator.vibrate) return;
+        if (k === 'steer' && id === 'togglesTitle') return; // steering style lives in the pause menu only
         const b = document.createElement('button'); b.className = 'tg' + ((k === 'steer' ? true : save[k]) ? ' on' : ''); b.textContent = label;
         b.onclick = () => {
           A.unlock();
@@ -596,7 +644,8 @@
       const b = document.createElement('button'); b.className = 'card2 ' + d.season + (d.mirror ? ' mirror' : '');
       const key = d.id + '_' + DRD.CLASSES[save.cls].id;
       const best = mode === 'tt' ? save.tt[d.id] : save.best[key];
-      const line = mode === 'tt' ? (best && best.lap ? 'Best lap ' + fmt(best.lap) : 'No ghost yet') : (best ? 'Best ' + ordinal(best.place) + ' · ' + fmt(best.time) : 'Not raced yet');
+      const mr = mode === 'tt' || !best ? 9 : best.medal != null ? best.medal : ((m) => m && m.medal ? ['gold', 'silver', 'bronze'].indexOf(m.medal) : 9)(DRD.medal(d.id, save.cls, best.time)), md = mr < 3 ? ['gold', 'silver', 'bronze'][mr] : null;
+      const line = mode === 'tt' ? (best && best.lap ? 'Best lap ' + fmt(best.lap) : 'No ghost yet') : (best ? (md ? `<span class="medal ${md}"></span>` : '') + 'Best ' + ordinal(best.place) + ' · ' + fmt(best.time) : 'Not raced yet');
       b.innerHTML = `<canvas width="120" height="96"></canvas><div class="ct"><b>${d.name}</b><i>${{ spring: 'Mud season', autumn: 'Foliage', winter: 'Snow', night: 'Night' }[d.season]}</i><span>${d.blurb}</span><em>${line}</em></div>`;
       drawMini(b.querySelector('canvas'), T);
       b.onclick = () => { A.unlock(); A.click(); save.track = i; persist(); launch({ mode, track: i }); };
@@ -622,6 +671,9 @@
     $('btnRace').onclick = () => { A.unlock(); A.click(); G.mode = 'single'; launch({ mode: 'single', track: save.track }); };
     $('btnGP').onclick = () => { A.unlock(); A.click(); G.gp = { round: 0, pts: {}, rig: {}, cls: save.cls, nameSeed: Math.floor(Math.random() * 1e6) }; G.mode = 'gp'; launch({ mode: 'gp', track: 0 }); };
     $('btnPick').onclick = () => { A.unlock(); A.click(); renderSelect('single'); };
+    $('btnModes').onclick = () => { A.unlock(); A.click(); showPanel('panModes'); };
+    $('btnGarage').onclick = () => { A.unlock(); A.click(); showPanel('panGarage'); };
+    document.querySelectorAll('[data-back]').forEach((b) => { b.onclick = () => { A.click(); showPanel('panMain'); renderTitle(); }; });
     $('btnDaily').onclick = () => { A.unlock(); A.click(); G.mode = 'daily'; launch({ mode: 'daily', track: dailyInfo().track }); };
     $('selMirror').onclick = () => { A.click(); if (!save.mirror) { $('selSub').textContent = 'Mirror roads: win a Commuter or Rally Pro race, or finish on a Grand Prix podium.'; return; } G.selMirrorOn = !G.selMirrorOn; renderSelect(G.selMode); };
     $('btnShare').onclick = () => {
@@ -647,16 +699,16 @@
   // ------------------------------------------------------------ minimap
   function buildMinimap() {
     const T = G.T; if (!T) return;
-    const size = Math.round(Math.min(108, Math.min(cw, ch) * 0.27));
+    const size = Math.round(Math.min(76, Math.min(cw, ch) * 0.2));
     const c = ART.mk(size * dpr, size * dpr), g = c.getContext('2d'); g.scale(dpr, dpr);
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (let i = 0; i < T.N; i++) { x0 = Math.min(x0, T.X[i]); x1 = Math.max(x1, T.X[i]); y0 = Math.min(y0, T.Y[i]); y1 = Math.max(y1, T.Y[i]); }
-    const sc = Math.min((size - 14) / (x1 - x0), (size - 14) / (y1 - y0));
+    const sc = Math.min((size - 12) / (x1 - x0), (size - 12) / (y1 - y0));
     const ox = (size - (x1 - x0) * sc) / 2 - x0 * sc, oy = (size - (y1 - y0) * sc) / 2 - y0 * sc;
-    g.fillStyle = 'rgba(20,14,8,.72)'; ART.rr(g, 0, 0, size, size, 14); g.fill();
+    g.fillStyle = 'rgba(20,14,8,.6)'; ART.rr(g, 0, 0, size, size, 12); g.fill();
     g.lineJoin = 'round'; g.lineCap = 'round';
     const path = (X, Y, n, closed) => { g.beginPath(); for (let i = 0; i < n; i += 2) { const x = X[i] * sc + ox, y = Y[i] * sc + oy; i ? g.lineTo(x, y) : g.moveTo(x, y); } if (closed) g.closePath(); };
-    g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 6; path(T.X, T.Y, T.N, true); g.stroke();
-    g.strokeStyle = 'rgba(244,232,204,.92)'; g.lineWidth = 3.4; path(T.X, T.Y, T.N, true); g.stroke();
+    g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 4.6; path(T.X, T.Y, T.N, true); g.stroke();
+    g.strokeStyle = 'rgba(244,232,204,.92)'; g.lineWidth = 2.6; path(T.X, T.Y, T.N, true); g.stroke();
     T.shorts.forEach((o) => { g.strokeStyle = 'rgba(255,178,77,.9)'; g.lineWidth = 1.8; g.setLineDash([2.5, 2.5]); path(o.X, o.Y, o.M, false); g.stroke(); g.setLineDash([]); });
     const p = T.point(0); g.fillStyle = '#fff'; g.fillRect(p.x * sc + ox - 2, p.y * sc + oy - 2, 4, 4);
     UI.mm = { c, size, sc, ox, oy };
@@ -681,7 +733,7 @@
     G.shake = Math.max(0, G.shake - dt * 18);
     cam.sx = (Math.random() - 0.5) * G.shake; cam.sy = (Math.random() - 0.5) * G.shake;
   }
-  function camAY() { return G.screen === 'title' ? (UI.portrait ? 0.4 : 0.5) : UI.portrait ? 0.59 : 0.7; }
+  function camAY() { return G.screen === 'title' ? (UI.portrait ? 0.4 : 0.5) : UI.portrait ? 0.64 : 0.7; }
   function camTransform(g, scale) {
     const cam = G.cam, ay = camAY();
     g.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
@@ -747,6 +799,7 @@
       ctx.restore();
     }
     // name tags: only the two rivals nearest to you
+    G.tagPts = [];
     G.tagSet = R.player ? new Set(R.cars.filter((q) => q !== R.player).sort((a, b) => Math.hypot(a.x - R.player.x, a.y - R.player.y) - Math.hypot(b.x - R.player.x, b.y - R.player.y)).slice(0, 2)) : null;
     // cars
     for (const c of R.cars) {
@@ -776,12 +829,16 @@
     if (T.season === 'night') drawNight(vb);
     // floating text
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    for (const q of G.pops) {
-      let [sx, sy] = worldToScreen(q.x, q.y); sy = Math.min(sy, ch * 0.58); sx = clamp(sx, 90, cw - 90);
-      const k = q.t / 1.1, s = 1 + 0.35 * Math.max(0, 1 - q.t * 6);
-      ctx.globalAlpha = 1 - Math.max(0, k - 0.6) / 0.4;
-      ctx.font = `${Math.round(19 * s)}px "Alfa Slab One", serif`; ctx.textAlign = 'center';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(30,18,8,.85)'; ctx.strokeText(q.text, sx, sy - 34 - (q.dy || 0) - q.t * 50); ctx.fillStyle = q.col; ctx.fillText(q.text, sx, sy - 34 - (q.dy || 0) - q.t * 50);
+    // pop-up beside your car (left or right, whichever side has room), never on the road ahead of it
+    if (G.pops.length && R.player) {
+      const q = G.pops[0], [px, py] = worldToScreen(R.player.x, R.player.y);
+      const k = q.t / 1.1, s = 1 + 0.3 * Math.max(0, 1 - q.t * 7);
+      ctx.font = '18px "Alfa Slab One", serif'; const w = ctx.measureText(q.text).width;
+      const right = px + 34 + w <= cw - 8 || px < cw / 2;
+      const x = right ? Math.min(px + 34, cw - 10 - w) : Math.max(px - 34 - w, 10), y = py + 6 - q.t * 14;
+      ctx.globalAlpha = 1 - Math.max(0, k - 0.65) / 0.35;
+      ctx.save(); ctx.translate(x + (right ? 0 : w), y); ctx.scale(s, s); ctx.textAlign = right ? 'left' : 'right';
+      ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(30,18,8,.85)'; ctx.strokeText(q.text, 0, 0); ctx.fillStyle = q.col; ctx.fillText(q.text, 0, 0); ctx.restore();
     }
     ctx.globalAlpha = 1;
     drawWeather();
@@ -802,11 +859,14 @@
     // shadow (world-fixed light from the top-left)
     ctx.save(); ctx.translate(c.x + 3 + lift * 0.8, c.y + 4 + lift); ctx.rotate(c.h); ctx.globalAlpha = 1 - c.z * 0.3;
     ctx.drawImage(sh.c, -sh.ox / sh.sc, -sh.oy / sh.sc, sh.c.width / sh.sc, sh.c.height / sh.sc); ctx.restore(); ctx.globalAlpha = 1;
+    const me = c.isPlayer && !G.demo;
+    if (me) { ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.save(); ctx.translate(c.x + lift * 0.5, c.y + lift * 0.6); ctx.rotate(c.h); ctx.beginPath(); ctx.ellipse(0, 0, 25, 16, 0, 0, TAU); ctx.fill(); ctx.restore(); }
     ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.h);
     // body roll in drifts: slight squash
     const roll = c.drifting ? 0.06 : 0;
     ctx.scale(sc * (1 + roll * 0.3), sc * (1 - roll));
-    if (c.invT > 0 && c.spinT <= 0 && Math.floor(ct * 16) % 2) ctx.globalAlpha = 0.55;
+    if (c.invT > 0 && c.spinT <= 0 && Math.floor(ct * 16) % 2) ctx.globalAlpha = 0.8;
+    if (me) { const ol = ART.outline(sp, 2.2); ctx.drawImage(ol.c, -ol.ox / ART.CS, -ol.oy / ART.CS, ol.c.width / ART.CS, ol.c.height / ART.CS); }
     ctx.drawImage(sp.c, -sp.ox / ART.CS, -sp.oy / ART.CS, sp.c.width / ART.CS, sp.c.height / ART.CS);
     ctx.globalAlpha = 1;
     // boost flame
@@ -824,7 +884,7 @@
       if (d < 260 && G.tagSet && G.tagSet.has(c)) {
         const [sx, sy] = worldToScreen(c.x, c.y), a = clamp((260 - d) / 80, 0, 1) * 0.9;
         ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.globalAlpha = a; ctx.font = '800 11px Barlow, sans-serif'; ctx.textAlign = 'center';
-        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,12,6,.75)'; ctx.strokeText(c.name, sx, sy - 22); ctx.fillStyle = c.rig.roof || '#fff'; ctx.fillText(c.name, sx, sy - 22);
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,12,6,.75)'; ctx.strokeText(c.name, sx, sy - 22); ctx.fillStyle = c.rig.roof || '#fff'; ctx.fillText(c.name, sx, sy - 22); if (G.tagPts) G.tagPts.push([sx, sy - 22]);
         if (c.place < P.place && c.place === P.place - 1) { ctx.fillStyle = '#ffd34d'; ctx.fillText('▲', sx, sy - 33); }
         ctx.restore(); camTransform(ctx, 1);
       }
@@ -836,8 +896,7 @@
       const pu = 0.5 + 0.5 * Math.sin(ct * 6), rr = 24 + pu * 3;
       ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,211,77,' + (0.55 + 0.4 * pu) + ')'; ctx.beginPath(); ctx.arc(sx, sy, rr, 0, TAU); ctx.stroke();
-      ctx.font = '800 14px Barlow, sans-serif'; ctx.textAlign = 'left';
-      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText('◀ YOU', sx + rr + 6, sy + 5); ctx.fillStyle = '#ffd34d'; ctx.fillText('◀ YOU', sx + rr + 6, sy + 5); ctx.restore();
+      ctx.restore();
       camTransform(ctx, 1);
     }
   }
@@ -904,6 +963,10 @@
     camTransform(g, ls);
     const glow = (x, y, r, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(0,0,0,' + a + ')'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); };
     const cone = (x, y, h, len, spread, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, len); gr.addColorStop(0, 'rgba(0,0,0,' + a + ')'); gr.addColorStop(0.6, 'rgba(0,0,0,' + a * 0.6 + ')'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.beginPath(); g.moveTo(x, y); g.arc(x, y, len, h - spread, h + spread); g.closePath(); g.fill(); };
+    // moonlight on the gravel: the unlit road stays clearly lighter than the unlit grass, so the next corner reads
+    const NP = nightPaths(T);
+    g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = 'rgba(0,0,0,.5)';
+    for (const q of NP.road) { g.lineWidth = q.w; g.stroke(q.p); }
     for (const c of R.cars) {
       const me = c === R.player;
       if (!me && (c.x < vb.x0 - 400 || c.x > vb.x1 + 400 || c.y < vb.y0 - 400 || c.y > vb.y1 + 400)) continue;
@@ -931,10 +994,13 @@
       if (d.x < vb.x0 - 100 || d.x > vb.x1 + 100 || d.y < vb.y0 - 100 || d.y > vb.y1 + 100) continue;
       const gr = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 60); gr.addColorStop(0, 'rgba(255,200,120,.35)'); gr.addColorStop(1, 'rgba(255,200,120,0)'); ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(d.x, d.y, 60, 0, TAU); ctx.fill();
     }
-    // roadside reflector posts so the road edge reads in the dark
-    if (!T.reflectors) { T.reflectors = []; for (let i = 0; i < T.N; i += 6) for (const sd of [-1, 1]) { const d = sd * (T.HW[i] + 10); T.reflectors.push([T.X[i] - T.TY[i] * d, T.Y[i] + T.TX[i] * d]); } }
-    ctx.fillStyle = 'rgba(255,200,100,.95)';
-    for (const r of T.reflectors) { if (r[0] < vb.x0 || r[0] > vb.x1 || r[1] < vb.y0 || r[1] > vb.y1) continue; ctx.beginPath(); ctx.arc(r[0], r[1], 3.6, 0, TAU); ctx.fill(); }
+    // faint cream edge lines along both sides of the road
+    ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = 'rgba(255,246,220,.35)'; ctx.lineWidth = 2; ctx.stroke(NP.edge);
+    ctx.globalCompositeOperation = 'lighter';
+    // roadside reflector posts: sparse and pale (not yellow, so nothing on the field looks like your minimap dot); the cream edge line does most of the work
+    if (!T.reflectors) { T.reflectors = []; for (let i = 0; i < T.N; i += 24) for (const sd of [-1, 1]) { const d = sd * (T.HW[i] + 10); T.reflectors.push([T.X[i] - T.TY[i] * d, T.Y[i] + T.TX[i] * d]); } }
+    ctx.fillStyle = 'rgba(255,236,215,.4)';
+    for (const r of T.reflectors) { if (r[0] < vb.x0 || r[0] > vb.x1 || r[1] < vb.y0 || r[1] > vb.y1) continue; ctx.beginPath(); ctx.arc(r[0], r[1], 2, 0, TAU); ctx.fill(); }
     for (const c of R.cars) {
       if (c.x < vb.x0 || c.x > vb.x1 || c.y < vb.y0 || c.y > vb.y1) continue;
       const fx = Math.cos(c.h), fy = Math.sin(c.h), rx = -fy, ry = fx;
@@ -944,10 +1010,20 @@
     ctx.globalCompositeOperation = 'source-over';
   }
 
+  function nightPaths(T) {
+    if (T.nightP) return T.nightP;
+    const poly = (X, Y, n, closed, off) => { const p = new Path2D(); for (let i = 0; i < n; i++) { const o = off ? off(i) : 0, x = X[i] - (off ? T.TY[i] : 0) * o, y = Y[i] + (off ? T.TX[i] : 0) * o; i ? p.lineTo(x, y) : p.moveTo(x, y); } if (closed) p.closePath(); return p; };
+    let hw = 0; for (let i = 0; i < T.N; i++) hw += T.HW[i]; hw /= T.N;
+    const road = [{ p: poly(T.X, T.Y, T.N, true), w: hw * 2 }].concat(T.shorts.map((o) => ({ p: poly(o.X, o.Y, o.M, false), w: o.hw * 2 })));
+    const edge = new Path2D(); edge.addPath(poly(T.X, T.Y, T.N, true, (i) => T.HW[i] - 1)); edge.addPath(poly(T.X, T.Y, T.N, true, (i) => -(T.HW[i] - 1)));
+    T.nightP = { road, edge };
+    return T.nightP;
+  }
+
   // ------------------------------------------------------------ weather (screen space)
   function initWeather() {
     G.weather = [];
-    const s = G.T.season, n = s === 'winter' ? 70 : s === 'autumn' ? 14 : s === 'night' ? 22 : 10;
+    const s = G.T.season, n = s === 'winter' ? 24 : 0; // weather stays a hint, never a curtain over the road
     for (let i = 0; i < n; i++) G.weather.push({ x: Math.random(), y: Math.random(), z: 0.4 + Math.random() * 0.8, p: Math.random() * TAU });
   }
   function drawWeather() {
@@ -993,34 +1069,24 @@
     const lapN = clamp(P.lapIdx + 1, 1, R.laps);
     hudText('LAP ' + lapN + '/' + R.laps, rx, top + 20, 18, P.lapIdx + 1 === R.laps ? '#ff9a3c' : '#fff', 'right');
     hudText(fmt(R.phase === 'race' ? (P.finished ? P.finishT : R.raceT) : 0), rx, top + 40, 15, '#f4e8cc', 'right', '800 15px Barlow, sans-serif', 3);
-    if (G.lastSplit && G.mode === 'tt' && G.banner && G.banner.t < G.banner.dur) {
-      const d = G.lastSplit.d; if (d != null) hudText((d <= 0 ? '−' : '+') + Math.abs(d).toFixed(2), rx, top + 60, 16, d <= 0 ? '#7fe08a' : '#ff8a6a', 'right', '800 16px Barlow, sans-serif', 3);
+    // lap delta against your best lap here (time trial: against the ghost lap)
+    if (G.lapDelta && G.lapDelta.t < 1.5) {
+      const d = G.lapDelta.d; ctx.globalAlpha = Math.min(1, (1.5 - G.lapDelta.t) * 4);
+      hudText((d <= 0 ? '−' : '+') + Math.abs(d).toFixed(2), rx, top + 62, 18, d <= 0 ? '#8fe08a' : '#ff8a70', 'right', '800 18px Barlow, sans-serif', 3.5);
+      ctx.globalAlpha = 1;
     }
-    // item slot (top centre)
-    const sz = 58, ix = cw / 2 - sz / 2 + (G.itemShake > 0 ? Math.sin(G.itemShake * 60) * 4 : 0), iy = top - 2;
-    const ip = G.itemPop > 0 ? 1 + G.itemPop * 0.5 : 1;
-    ctx.save(); ctx.translate(ix + sz / 2, iy + sz / 2); ctx.scale(ip, ip);
-    const full = P.item || P.roulette > 0;
-    ctx.fillStyle = full ? 'rgba(30,20,10,.55)' : 'rgba(30,20,10,.28)'; ART.rr(ctx, -sz / 2, -sz / 2, sz, sz, 14); ctx.fill();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = P.item ? 'rgba(255,211,77,.95)' : 'rgba(244,232,204,.3)'; if (!full) ctx.setLineDash([6, 5]); ctx.stroke(); ctx.setLineDash([]);
-    let ik = P.item;
-    if (P.roulette > 0) { const idx = Math.floor(performance.now() / 70) % 5; ik = DRD.ITEMS[idx]; if (G._lastTick !== idx) { G._lastTick = idx; A.tick(idx); } }
-    if (ik) { const im = ART.ASSETS['icon_' + ik]; ctx.drawImage(im, -sz * 0.4, -sz * 0.4, sz * 0.8, sz * 0.8); }
-    else { ctx.globalAlpha = 0.3; ctx.drawImage(ART.ASSETS.icon_crate, -sz * 0.3, -sz * 0.3, sz * 0.6, sz * 0.6); ctx.globalAlpha = 1; } // empty: a faint crate says "grab one"
-    if (P.item && P.itemN > 1) hudText('×' + P.itemN, sz / 2 - 2, sz / 2 - 2, 15, '#ffd34d', 'right', '"Alfa Slab One", serif', 3);
-    ctx.restore();
     // minimap
     if (UI.mm) {
-      const m = UI.mm, mx = L - 4, my = top + 50;
+      const m = UI.mm, mx = L - 4, my = top + 48;
       ctx.drawImage(m.c, mx, my, m.size, m.size);
       for (const c of R.cars) {
         if (c === P) continue;
         ctx.fillStyle = c.rig.body; ctx.strokeStyle = '#1a120a'; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(mx + c.x * m.sc + m.ox, my + c.y * m.sc + m.oy, 3.4, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(mx + c.x * m.sc + m.ox, my + c.y * m.sc + m.oy, 2.6, 0, TAU); ctx.fill(); ctx.stroke();
       }
       const gp = ghostPos(); if (gp) { ctx.fillStyle = 'rgba(200,230,255,.8)'; ctx.beginPath(); ctx.arc(mx + gp.x * m.sc + m.ox, my + gp.y * m.sc + m.oy, 3, 0, TAU); ctx.fill(); }
       ctx.fillStyle = '#ffd34d'; ctx.strokeStyle = '#1a120a'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(mx + P.x * m.sc + m.ox, my + P.y * m.sc + m.oy, 4.6, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(mx + P.x * m.sc + m.ox, my + P.y * m.sc + m.oy, 3.8, 0, TAU); ctx.fill(); ctx.stroke();
     }
     // touch controls
     if (G.touchUI && !P.finished) drawButtons();
@@ -1031,8 +1097,9 @@
     }
     // drift prompt for first-timers
     if (!save.hints.drift && R.phase === 'race' && !P.finished && !P.drifting && P.speed > 200) {
-      const T = G.T, k0 = T.idx(P.s); let mk = 0; for (let j = 4; j < 30; j += 2) mk = Math.max(mk, Math.abs(T.LK[(k0 + j) % T.N]));
-      if (mk * P.speed > 2.0) G.prompt = { text: G.touchUI ? 'Hold DRIFT + steer!' : 'Hold SHIFT + steer to drift!', t: 0, dur: 1.4, btn: 'drift' };
+      const T = G.T, k0 = T.idx(P.s); let mk = 0, side = 0; for (let j = 4; j < 30; j += 2) { const kk = T.LK[(k0 + j) % T.N]; if (Math.abs(kk) > mk) { mk = Math.abs(kk); side = Math.sign(kk); } }
+      // teach the one-thumb drift (the DRIFT button on the turn side alone picks the direction): it is the easiest one to land
+      if (mk * P.speed > 2.0) G.prompt = { text: G.touchUI ? (save.steer === 'tap' ? "Hold the DRIFT on the side you're turning" : 'Hold DRIFT + steer!') : 'Hold SHIFT + steer to drift!', t: 0, dur: 1.6, btn: 'drift', side: G.touchUI && save.steer === 'tap' ? side : 0 };
     }
     // wrong way: heading well against the road for a moment -> big sign + which way to turn
     if (R.phase === 'race' && !P.finished && P.k >= 0 && P.k < G.T.N && P.spinT <= 0) {
@@ -1052,11 +1119,11 @@
       ctx.restore(); ctx.globalAlpha = 1;
     }
     // stuck against something: say how to get out (a tow comes at 5.5 s anyway)
-    if (R.phase === 'race' && !P.finished && P.progT > 2.2 && P.speed < 70 && P.spinT <= 0 && !(G.prompt && G.prompt.btn === 'brake')) G.prompt = { text: G.touchUI ? 'Stuck? Hold BRAKE to back out' : 'Stuck? Hold ↓ to back out', t: 0, dur: 2.2, btn: 'brake' };
+    if (R.phase === 'race' && !P.finished && P.progT > 1.5 && P.speed < 70 && P.spinT <= 0 && !(G.prompt && G.prompt.btn === 'brake')) G.prompt = { text: !G.touchUI ? 'Stuck? Hold ↓ to back out' : save.steer === 'tap' ? 'Stuck? Hold both sides to back up' : 'Stuck? Hold BRAKE to back out', t: 0, dur: 2.2, btn: 'brake' };
     if (G.prompt && G.wrongT > 0.7) G.prompt.t = Math.min(G.prompt.t, 0.01); // hold other prompts while WRONG WAY shows
     if (G.prompt && !(G.wrongT > 0.7)) {
       if (G.prompt.t > G.prompt.dur) G.prompt = null;
-      else if (G.prompt.text) { const a = Math.min(1, G.prompt.t * 5) * Math.min(1, (G.prompt.dur - G.prompt.t) * 4); ctx.globalAlpha = a; hudText(G.prompt.text, cw / 2, ch * 0.3, 22, '#ffd34d', 'center'); ctx.globalAlpha = 1; }
+      else if (G.prompt.text) { const a = Math.min(1, G.prompt.t * 5) * Math.min(1, (G.prompt.dur - G.prompt.t) * 4); ctx.globalAlpha = a; coachLine(G.prompt.text, '#ffd34d'); ctx.globalAlpha = 1; }
     }
     // countdown / banners
     if (G.banner) {
@@ -1071,10 +1138,15 @@
         ctx.restore(); ctx.globalAlpha = 1;
       }
     }
-    if (R.phase === 'countdown' && G.introT <= 0 && (save.hints.rocket || 0) < 2 && R.countdown < 2.6) {
-      const a = clamp((2.6 - R.countdown) * 3, 0, 1);
-      ctx.globalAlpha = a; hudText(G.touchUI ? 'Hold DRIFT when the 1 shows' : 'Hold SHIFT when the 1 shows', cw / 2, ch * 0.67, 19, '#ffd34d', 'center'); hudText('for a rocket start!', cw / 2, ch * 0.67 + 22, 15, '#f4e8cc', 'center', '800 15px Barlow, sans-serif', 3); ctx.globalAlpha = 1;
+    const races = save.races || 0;
+    if (R.phase === 'countdown' && G.introT <= 0 && races >= 2 && races <= 3 && (save.hints.rocket || 0) < 2 && G.mode !== 'daily') {
+      ctx.globalAlpha = clamp((2.1 - R.countdown) * 3, 0, 1); coachLine(G.touchUI ? 'Hold DRIFT as the 1 shows = rocket start' : 'Hold SHIFT as the 1 shows = rocket start', '#ffd34d', 14); ctx.globalAlpha = 1;
       if (!G.prompt || G.prompt.btn !== 'drift') G.prompt = { text: '', t: 0, dur: 0.4, btn: 'drift' };
+    } else if (G.touchUI && save.steer === 'tap' && races < 2 && !P.finished && R.raceT < 12 && G.introT <= 0 && !(G.prompt && G.prompt.text)) {
+      // first two races: teach the thumb steering with one line + a live steering bar
+      ctx.globalAlpha = R.phase === 'countdown' ? 1 : clamp(1 - (R.raceT - 9) / 3, 0, 1);
+      coachLine('slide your thumb: edge = hard turn, middle = gentle', '#f4e8cc', 14);
+      ctx.globalAlpha = 1;
     }
     if (G.introT > 0 && R.phase === 'countdown') {
       ctx.globalAlpha = clamp(G.introT, 0, 1);
@@ -1083,46 +1155,82 @@
       ctx.globalAlpha = 1;
     }
   }
+  // one place for teaching text: a single line just above the bottom controls, off the road ahead
+  function coachY() {
+    const it = UI.btn.item, y = UI.portrait && it ? it.y - it.r - 44 : ch - ins.b - 22;
+    // a rival's name tag right under the line: lift the line 18 px so neither hides the other
+    // (held for 0.4 s after the tag leaves, so the line doesn't flicker up and down)
+    const now = performance.now();
+    if (G.tagPts && G.tagPts.some((q) => Math.abs(q[0] - cw / 2) < 170 && q[1] > y - 16 && q[1] < y + 12)) G.coachLiftAt = now;
+    return now - (G.coachLiftAt || -1e9) < 400 ? y - 18 : y;
+  }
+  function coachLine(text, col, size) { size = size || 15; hudText(text, cw / 2, coachY(), size, col || '#f4e8cc', 'center', '800 ' + size + 'px Barlow, sans-serif', 3.5); }
   function drawButtons() {
-    const R = G.race, P = R.player;
+    const R = G.race, P = R.player, tap = save.steer === 'tap', snow = G.T && G.T.season === 'winter';
     const held = { drift: false, brake: false, item: false };
     for (const q of ptrs.values()) if (q.role in held) held[q.role] = true;
     if (G.kb.drift) held.drift = true;
-    // steering hints for tap-sides mode
-    if (save.steer === 'tap' && R.raceT < 12) {
-      ctx.globalAlpha = R.phase === 'countdown' ? 0.8 : clamp(0.8 - (R.raceT - 8) / 5, 0, 0.8);
-      hudText('‹ hold', ins.l + 16, ch * 0.56, 20, '#fff', 'left', '800 20px Barlow, sans-serif', 4);
-      hudText('hold ›', cw - ins.r - 16, ch * 0.56, 20, '#fff', 'right', '800 20px Barlow, sans-serif', 4);
-      ctx.globalAlpha = 1;
-    }
-    // steering finger feedback
+    // steering finger feedback: a soft edge glow that grows with how hard you are turning
     for (const q of ptrs.values()) {
       if (q.role !== 'steer') continue;
-      if (save.steer === 'drag') {
+      if (!tap) {
         ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(q.x0 - 46, q.y); ctx.lineTo(q.x0 + 46, q.y); ctx.stroke();
         ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.arc(q.x, q.y, 18, 0, TAU); ctx.fill();
       } else {
-        const left = q.x < cw / 2; const gr = ctx.createLinearGradient(left ? 0 : cw, 0, left ? 60 : cw - 60, 0);
-        gr.addColorStop(0, 'rgba(255,211,77,.28)'); gr.addColorStop(1, 'rgba(255,211,77,0)'); ctx.fillStyle = gr; ctx.fillRect(left ? 0 : cw - 60, 0, 60, ch);
+        const left = q.x < cw / 2, amt = Math.abs(thumbSteer(q.x)), gr = ctx.createLinearGradient(left ? 0 : cw, 0, left ? 60 : cw - 60, 0);
+        gr.addColorStop(0, 'rgba(255,211,77,' + (0.06 + 0.24 * amt).toFixed(3) + ')'); gr.addColorStop(1, 'rgba(255,211,77,0)'); ctx.fillStyle = gr; ctx.fillRect(left ? 0 : cw - 60, 0, 60, ch);
       }
+    }
+    // first two races: a live steering bar just above ITEM (dot = how hard the car is turning)
+    const it = UI.btn.item;
+    if (tap && it && (save.races || 0) < 2 && R.raceT < 12) {
+      const a = R.phase === 'countdown' ? 1 : clamp(1 - (R.raceT - 9) / 3, 0, 1), y = it.y - it.r - 14;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(20,12,6,.55)'; ART.rr(ctx, cw / 2 - 64, y - 4.5, 128, 9, 4.5); ctx.fill();
+      ctx.fillStyle = 'rgba(244,232,204,.75)'; ctx.fillRect(cw / 2 - 60, y - 1.5, 120, 3); ctx.fillRect(cw / 2 - 1, y - 4, 2, 8);
+      ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(cw / 2 + clamp(P.steer || 0, -1, 1) * 60, y, 5, 0, TAU); ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#2a1a0c'; ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // item name for a second after you pick it up
+    if (it && G.itemName && G.itemName.t < 1) {
+      ctx.globalAlpha = Math.min(1, (1 - G.itemName.t) * 5);
+      hudText(G.itemName.text, it.x, it.y - it.r - (tap && (save.races || 0) < 2 && R.raceT < 12 ? 26 : 12), 13, '#ffe7a8', 'center', '800 13px Barlow, sans-serif', 3);
+      ctx.globalAlpha = 1;
     }
     for (const k in UI.btn) {
       const b = UI.btn[k], on = held[b.role];
-      ctx.save(); ctx.translate(b.x, b.y); const s = on ? 0.92 : 1; ctx.scale(s, s);
-      let fill = 'rgba(30,20,10,.5)', ring = 'rgba(244,232,204,.7)';
+      ctx.save(); ctx.translate(b.x, b.y);
+      // on snow the pale buttons vanish: a dark fill and a dark ring, and they stay more opaque when idle
+      let fill = snow ? 'rgba(40,28,18,.55)' : 'rgba(30,20,10,.5)', ring = snow ? 'rgba(40,28,18,.9)' : 'rgba(244,232,204,.7)', alpha = 1, s = on ? 0.92 : 1;
       if (b.role === 'drift') {
         if (P.drifting && P.driftTier === 2) { fill = 'rgba(255,80,50,.55)'; ring = '#ff8a5a'; }
         else if (P.drifting && P.driftTier === 1) { fill = 'rgba(255,200,60,.45)'; ring = '#ffe27a'; }
+        else if (on) fill = snow ? 'rgba(40,28,18,.65)' : 'rgba(244,232,204,.35)';
+        else alpha = snow ? 0.85 : 0.45;
+      } else if (b.role === 'item') {
+        const full = P.item || P.roulette > 0;
+        if (P.item && P.roulette <= 0) { ring = '#ffd34d'; fill = 'rgba(255,200,60,' + (0.25 + 0.15 * Math.sin(performance.now() / 150)) + ')'; }
         else if (on) fill = 'rgba(244,232,204,.35)';
-      } else if (b.role === 'item') { if (P.item && P.roulette <= 0) { ring = '#ffd34d'; fill = 'rgba(255,200,60,' + (0.25 + 0.15 * Math.sin(performance.now() / 150)) + ')'; } else if (on) fill = 'rgba(244,232,204,.35)'; }
-      else if (on) fill = 'rgba(255,90,60,.45)';
+        if (!full) alpha = snow ? 0.6 : 0.35;
+        if (G.itemShake > 0) ctx.translate(Math.sin(G.itemShake * 60) * 4, 0);
+        if (G.itemPop > 0) s *= 1 + G.itemPop * 0.35;
+      } else if (on) fill = 'rgba(255,90,60,.45)';
+      ctx.scale(s, s); ctx.globalAlpha = alpha;
       ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(0, 0, b.r, 0, TAU); ctx.fill();
       ctx.lineWidth = 3; ctx.strokeStyle = ring; ctx.stroke();
       // drift charge arc
-      if (b.role === 'drift' && P.drifting) { const k = clamp(P.driftT / DRD.DRIFT_T2, 0, 1); ctx.lineWidth = 5; ctx.strokeStyle = P.driftTier === 2 ? '#ff5a3c' : P.driftTier === 1 ? '#ffd34d' : '#fff'; ctx.beginPath(); ctx.arc(0, 0, b.r - 6, -Math.PI / 2, -Math.PI / 2 + k * TAU); ctx.stroke(); }
-      if (b.role === 'item' && P.item && P.roulette <= 0) { const im = ART.ASSETS['icon_' + P.item]; ctx.drawImage(im, -b.r * 0.55, -b.r * 0.62, b.r * 1.1, b.r * 1.1); }
-      else hudText(b.label, 0, b.role === 'brake' ? 4 : 6, b.role === 'brake' ? 11 : 15, '#f4e8cc', 'center', b.role === 'brake' ? '800 11px Barlow, sans-serif' : '"Alfa Slab One", serif', 3);
-      if (G.prompt && G.prompt.btn === b.role) { ctx.strokeStyle = 'rgba(255,211,77,' + (0.5 + 0.5 * Math.sin(performance.now() / 120)) + ')'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(0, 0, b.r + 8, 0, TAU); ctx.stroke(); }
+      if (b.role === 'drift' && P.drifting) { const kk = clamp(P.driftT / DRD.DRIFT_T2, 0, 1); ctx.lineWidth = 5; ctx.strokeStyle = P.driftTier === 2 ? '#ff5a3c' : P.driftTier === 1 ? '#ffd34d' : '#fff'; ctx.beginPath(); ctx.arc(0, 0, b.r - 6, -Math.PI / 2, -Math.PI / 2 + kk * TAU); ctx.stroke(); }
+      if (b.role === 'item') {
+        // the ITEM button is the item slot: the roulette spins on it, then it shows what you hold
+        let ik = P.roulette > 0 ? null : P.item;
+        if (P.roulette > 0) { const idx = Math.floor(performance.now() / 70) % 5; ik = DRD.ITEMS[idx]; if (G._lastTick !== idx) { G._lastTick = idx; A.tick(idx); } ctx.globalAlpha = 0.8; }
+        if (ik) ctx.drawImage(ART.ASSETS['icon_' + ik], -b.r * 0.55, -b.r * 0.58, b.r * 1.1, b.r * 1.1);
+        ctx.globalAlpha = 1;
+        if (P.item && P.roulette <= 0 && P.itemN > 1) hudText('×' + P.itemN, b.r * 0.62, b.r * 0.62, 15, '#ffd34d', 'center', '"Alfa Slab One", serif', 3);
+      } else if (b.role === 'drift') { if ((save.races || 0) < 3) hudText(b.label, 0, 6, 15, '#f4e8cc', 'center', '"Alfa Slab One", serif', 3); }
+      else hudText(b.label, 0, 4, 11, '#f4e8cc', 'center', '800 11px Barlow, sans-serif', 3);
+      ctx.globalAlpha = 1;
+      if (G.prompt && G.prompt.btn === b.role && !(G.prompt.side && b.role === 'drift' && (k === 'driftL' ? -1 : 1) !== G.prompt.side)) { ctx.strokeStyle = 'rgba(255,211,77,' + (0.5 + 0.5 * Math.sin(performance.now() / 120)) + ')'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(0, 0, b.r + 8, 0, TAU); ctx.stroke(); }
       ctx.restore();
     }
   }
@@ -1178,6 +1286,7 @@
   function updateTimers(dt) {
     if (G.flash > 0) G.flash -= dt * 1.6;
     if (G.itemShake > 0) G.itemShake -= dt; if (G.itemPop > 0) G.itemPop -= dt * 2; if (G.placePop > 0) G.placePop -= dt * 2;
+    if (G.itemName) G.itemName.t += dt; if (G.lapDelta) G.lapDelta.t += dt;
     if (G.banner) G.banner.t += dt;
     if (G.prompt) G.prompt.t += dt;
   }
@@ -1207,7 +1316,7 @@
     if (G.screen === 'race' && P) {
       const sp = (R.phase === 'countdown' ? 0.15 + (P.inp.drift ? 0.25 : 0) : P.speed / R.cls.vmax);
       const rough = P.surf === S.MUD ? 1 : P.surf === S.SHOULDER || P.surf === S.LEAVES || P.surf === S.DIRT ? 0.6 : 0.1;
-      A.engine(true, sp, P.drifting ? 0.9 : Math.min(1, Math.abs(P.slip || 0) / 120), rough, P.boostT > 0);
+      A.engine(true, sp, P.drifting ? 0.9 : Math.min(1, Math.abs(P.slip || 0) / 120), rough, P.boostT > 0, P.drifting ? clamp(P.driftT / DRD.DRIFT_T2, 0, 1) : 0);
       if (R.tractor && G.T.tractor) { const d = camDist(R.tractor.x, R.tractor.y); G.tractT = (G.tractT || 0) - dt; if (d < 500 && G.tractT <= 0) { G.tractT = 0.16; A.tractor(1 - d / 500); } }
     } else A.engine(false, 0, 0, 0);
     // results after finish

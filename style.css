@@ -164,3 +164,15 @@ button { font-family: var(--ui); cursor: pointer; touch-action: manipulation; bo
 .table .row:nth-child(2) { animation-delay: .25s !important; } .table .row:nth-child(3) { animation-delay: .32s !important; } .table .row:nth-child(4) { animation-delay: .39s !important; }
 .table .row:nth-child(5) { animation-delay: .46s !important; } .table .row:nth-child(6) { animation-delay: .53s !important; } .table .row:nth-child(7) { animation-delay: .6s !important; }
 .table .row:nth-child(1) { animation-delay: .18s; }
+
+/* title: RACE! + Modes + Garage; the rest lives one tap away */
+.big small { display: block; font-family: var(--ui); font-weight: 800; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin-top: 2px; }
+.panel.sub { background: rgba(28,18,10,.78); border-radius: 18px; padding: 10px 10px 12px; box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+.subhead { display: flex; align-items: center; gap: 10px; }
+.subhead h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 24px; letter-spacing: 1px; color: var(--cream); }
+.panel.sub .mid { flex: none; }
+.promo { color: #8fe08a; font-weight: 800; }
+.medal { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; box-shadow: 0 0 0 1.5px rgba(0,0,0,.5); }
+.medal.gold { background: #f2c230; } .medal.silver { background: #c9ccd2; } .medal.bronze { background: #c98a4a; }
+.medalline { text-align: center; font-weight: 800; font-size: 15px; color: var(--cream); line-height: 1.35; }
+.medalline .gap { opacity: .75; font-size: 13px; }

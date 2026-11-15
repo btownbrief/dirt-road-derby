@@ -69,7 +69,8 @@
     mudN = { g: mg, f: lp2 };
   }
   // speed01 0..1.3, slip 0..1, rough 0..1 (mud/grass), on = racing
-  A.engine = function (on, speed01, slip, rough, boost) {
+  A.engine = function (on, speed01, slip, rough, boost, charge) {
+    charge = charge || 0; // 0..1 drift charge: the hiss climbs as the slide builds toward the red boost
     if (!ctx || !eng) return;
     const t = ctx.currentTime, k = 0.06;
     const vol = on && A.sound && !A.quiet ? 1 : 0;
@@ -81,8 +82,8 @@
     eng.o1.frequency.setTargetAtTime(f, t, k); eng.o2.frequency.setTargetAtTime(f * 0.503, t, k); eng.o3.frequency.setTargetAtTime(f * 2.01, t, k);
     eng.lp.frequency.setTargetAtTime(560 + s * 1100 + (boost ? 600 : 0), t, k);
     eng.g.gain.setTargetAtTime(0.05 + s * 0.05, t, k);
-    hiss.g.gain.setTargetAtTime(Math.min(0.13, slip * 0.16), t, 0.05);
-    hiss.bp.frequency.setTargetAtTime(1600 + slip * 1400, t, 0.05);
+    hiss.g.gain.setTargetAtTime(Math.min(0.15, slip * 0.16 + charge * 0.03), t, 0.05);
+    hiss.bp.frequency.setTargetAtTime(1600 + slip * 1400 + charge * 2200, t, 0.05);
     mudN.g.gain.setTargetAtTime(Math.min(0.22, rough * s * 0.3), t, 0.06);
   };
 

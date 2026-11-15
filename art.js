@@ -108,8 +108,8 @@
         const d = sd * (hw + 2 + R() * 10);
         F.tufts.push({ x: C.X[k] - C.TY[k] * d, y: C.Y[k] + C.TX[k] * d, r: 2 + R() * 3, c: P.grassDots[Math.floor(R() * P.grassDots.length)] });
       }
-      // wall stones along the corridor edge (skip where another corridor joins)
-      if (k % 2 === 0) for (const sd of [-1, 1]) {
+      // wall stones along the corridor edge (skip where another corridor joins); sparse and quiet so they never compete with the cars
+      if (k % 4 === 0) for (const sd of [-1, 1]) {
         const d = sd * (C.CR[k] + 5);
         const x = C.X[k] - C.TY[k] * d, y = C.Y[k] + C.TX[k] * d;
         const probe = DRD.surfAt(T, C.X[k] - C.TY[k] * sd * (C.CR[k] + 14), C.Y[k] + C.TX[k] * sd * (C.CR[k] + 14));
@@ -118,12 +118,14 @@
       }
     }
     if (T.season === 'autumn') {
+      const edge = !!T.def.edgeLeaves;
       for (let k = 0; k < T.N; k++) {
-        for (const sd of [-1, 1]) for (let i = 0; i < 9; i++) {
-          const d = sd * (T.HW[k] + (R() * 2 - 1) * (R() < 0.5 ? 14 : 34));
+        // loose leaves on the grass outside the road edge only (edgeLeaves = the old look that hid the edge)
+        for (const sd of [-1, 1]) for (let i = 0; i < (edge ? 9 : (k + (sd > 0 ? 1 : 0)) % 2 ? 0 : 1); i++) { // one shoulder leaf every other sample per side
+          const d = edge ? sd * (T.HW[k] + (R() * 2 - 1) * (R() < 0.5 ? 14 : 34)) : sd * (T.HW[k] + 10 + R() * Math.max(4, T.CR[k] - T.HW[k] - 10));
           F.leaves.push({ x: T.X[k] - T.TY[k] * d + T.TX[k] * (R() - 0.5) * 8, y: T.Y[k] + T.TX[k] * d + T.TY[k] * (R() - 0.5) * 8, r: 2.2 + R() * 2.6, a: R() * TAU, c: P.leaves[Math.floor(R() * P.leaves.length)] });
         }
-        if (R() < 0.3) { const d = (R() * 2 - 1) * T.HW[k]; F.leaves.push({ x: T.X[k] - T.TY[k] * d, y: T.Y[k] + T.TX[k] * d, r: 2 + R() * 2, a: R() * TAU, c: P.leaves[Math.floor(R() * P.leaves.length)] }); }
+        if (R() < (edge ? 0.3 : 0.09)) { const d = (R() * 2 - 1) * T.HW[k]; F.leaves.push({ x: T.X[k] - T.TY[k] * d, y: T.Y[k] + T.TX[k] * d, r: 2 + R() * 2, a: R() * TAU, c: P.leaves[Math.floor(R() * P.leaves.length)] }); }
       }
     }
     if (T.season === 'spring' || T.season === 'night') {
@@ -229,6 +231,7 @@
       } else if (z.type === 'leaves') {
         const R = rng(z.seed); const cols = P.leaves || ['#c4661c'];
         blob(1, 'rgba(150,70,20,.35)');
+        g.strokeStyle = 'rgba(48,24,8,.75)'; g.lineWidth = 1.5; g.stroke();
         for (let i = 0; i < z.rl * z.rw * 0.12; i++) { const a = R() * TAU, r = Math.sqrt(R()), x = Math.cos(a) * r * z.rl, y = Math.sin(a) * r * z.rw; g.fillStyle = cols[Math.floor(R() * cols.length)]; g.beginPath(); g.ellipse(x, y, 3 + R() * 2.5, 1.8 + R() * 1.2, R() * 6, 0, TAU); g.fill(); }
       }
       g.restore();
@@ -267,8 +270,8 @@
       } else if (season === 'night') {
         g.fillStyle = P.wallLo; g.fillRect(st.x - 2, st.y - 2, 5, 5);
       } else {
-        g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.ellipse(st.x + 2, st.y + 2.5, st.r * 1.1, st.r * 0.85, st.a, 0, TAU); g.fill();
-        g.fillStyle = st.tone < 0.33 ? P.wallLo : st.tone < 0.75 ? P.wall : P.wallHi; g.beginPath(); g.ellipse(st.x, st.y, st.r, st.r * 0.78, st.a + st.tone, 0, TAU); g.fill();
+        g.fillStyle = 'rgba(0,0,0,.16)'; g.beginPath(); g.ellipse(st.x + 2, st.y + 2.5, st.r * 1.1, st.r * 0.85, st.a, 0, TAU); g.fill();
+        g.fillStyle = mix(st.tone < 0.33 ? P.wallLo : st.tone < 0.75 ? P.wall : P.wallHi, P.floor, 0.5); g.beginPath(); g.ellipse(st.x, st.y, st.r, st.r * 0.78, st.a + st.tone, 0, TAU); g.fill();
       }
     }
     if (season === 'night') { // rails between posts
@@ -359,10 +362,10 @@
 
   // ------------------------------------------------------------ trees
   const TREE = {
-    maple: { spring: ['#7b8f3e', '#93a84d', '#b2c06a', '#a04a3a'], autumn: ['#c2361d', '#e0662a', '#f19a2c', '#a32518'], winter: null, night: ['#2f5a2e', '#3d6e38', '#4f8445'] },
-    birch: { spring: ['#a9c25a', '#c3d77a', '#d7e59a'], autumn: ['#e2b62e', '#f2d04a', '#c99a1f'], winter: null, night: ['#4f7a3a', '#5f8c45'] },
-    oak: { spring: ['#5f7f34', '#759443', '#8aa653'], autumn: ['#9a5a22', '#b8742c', '#7d4518'], winter: null, night: ['#2b4f2a', '#356034'] },
-    apple: { spring: ['#6f9440', '#86a84e', '#f0d8e0'], autumn: ['#6f8a36', '#86a046', '#c0281e'], winter: null, night: ['#2f5a2e', '#3d6e38'] }
+    maple: { spring: ['#7b8f3e', '#93a84d', '#b2c06a'], autumn: ['#9c4a26', '#b9772e', '#c79a3a', '#8a3a22'], winter: null, night: ['#2f5a2e', '#3d6e38', '#4f8445'] },
+    birch: { spring: ['#a9c25a', '#c3d77a', '#d7e59a'], autumn: ['#c79a3a', '#b9772e', '#a8823a'], winter: null, night: ['#4f7a3a', '#5f8c45'] },
+    oak: { spring: ['#5f7f34', '#759443', '#8aa653'], autumn: ['#8a3a22', '#9c4a26', '#7a4a26'], winter: null, night: ['#2b4f2a', '#356034'] },
+    apple: { spring: ['#6f9440', '#86a84e', '#7d9a48'], autumn: ['#6f8a36', '#86a046', '#7a7a3a'], winter: null, night: ['#2f5a2e', '#3d6e38'] }
   };
   function treeSprite(kind, season, seed) {
     const s = 192, c = mk(s, s), g = c.getContext('2d'), R = rng(seed), m = s / 2;
@@ -389,7 +392,12 @@
       g.fillStyle = 'rgba(255,255,255,.6)'; for (let i = 0; i < 10; i++) { const a = R() * TAU, r = R() * 40; g.beginPath(); g.arc(Math.cos(a) * r, Math.sin(a) * r, 2 + R() * 3, 0, TAU); g.fill(); }
       return c;
     }
-    const cols = (TREE[kind] || TREE.maple)[season] || TREE.maple.spring;
+    // canopies stay calmer than the cars: 20% darker, 30% less saturated (autumn uses its own muted palette as is)
+    // spring: every round canopy is scaled to ~62 grey on screen (the forest floor is ~72, so 10-15% darker) so trees recede instead of reading as pale dust clouds
+    const base = (TREE[kind] || TREE.maple)[season] || TREE.maple.spring;
+    const lumOf = (h) => { const n = parseInt(h.slice(1), 16); return 0.3 * (n >> 16) + 0.59 * ((n >> 8) & 255) + 0.11 * (n & 255); };
+    const springDark = season === 'spring' ? Math.max(0, Math.min(0.8, 1 - 55 / (base.map((c) => lumOf(mute(c, 0, -0.15))).reduce((a, b) => a + b, 0) / base.length))) : 0;
+    const cols = base.map((c) => season === 'autumn' ? c : season === 'spring' ? mute(c, springDark, -0.15) : mute(c, 0.2, 0.3));
     // shadow
     softShadow(60, season === 'winter' ? 0.22 : 0.42);
     // blobs
@@ -397,7 +405,7 @@
     for (let i = 0; i < 9; i++) { const a = R() * TAU, r = R() * 26; blobs.push([Math.cos(a) * r, Math.sin(a) * r, 22 + R() * 14]); }
     blobs.forEach((b) => { g.fillStyle = shade(cols[0], -0.35); g.beginPath(); g.arc(b[0] + 2, b[1] + 3, b[2], 0, TAU); g.fill(); });
     blobs.forEach((b, i) => {
-      const col = cols[i % (cols.length > 3 && kind === 'maple' && season === 'spring' ? 3 : cols.length)];
+      const col = cols[i % cols.length];
       const gr = g.createRadialGradient(b[0] - b[2] * 0.4, b[1] - b[2] * 0.4, 2, b[0], b[1], b[2]);
       gr.addColorStop(0, shade(col, 0.25)); gr.addColorStop(0.7, col); gr.addColorStop(1, shade(col, -0.25));
       g.fillStyle = gr; g.beginPath(); g.arc(b[0], b[1], b[2], 0, TAU); g.fill();
@@ -408,13 +416,27 @@
       const lit = Math.cos(a + 2.36); // facing the top-left light
       g.fillStyle = shade(cols[i % Math.min(3, cols.length)], lit > 0 ? 0.18 * lit : 0.3 * lit); g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill();
     }
-    { const gr = g.createRadialGradient(-18, -20, 4, 0, 0, 54); gr.addColorStop(0, 'rgba(255,250,220,.22)'); gr.addColorStop(0.5, 'rgba(255,250,220,0)'); gr.addColorStop(0.85, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.18)'); g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 54, 0, TAU); g.fill(); }
+    { const gr = g.createRadialGradient(-18, -20, 4, 0, 0, 54); gr.addColorStop(0, 'rgba(255,250,220,.1)'); gr.addColorStop(0.5, 'rgba(255,250,220,0)'); gr.addColorStop(0.85, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.18)'); g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 54, 0, TAU); g.fill(); }
     // leaf texture
-    for (let i = 0; i < 70; i++) { const a = R() * TAU, r = Math.sqrt(R()) * 52; g.fillStyle = R() < 0.5 ? 'rgba(255,255,255,.12)' : 'rgba(0,0,0,.12)'; g.beginPath(); g.arc(Math.cos(a) * r, Math.sin(a) * r, 2 + R() * 3, 0, TAU); g.fill(); }
-    if (kind === 'maple' && season === 'spring') { g.fillStyle = '#b04a3a'; for (let i = 0; i < 26; i++) { const a = R() * TAU, r = Math.sqrt(R()) * 46; g.beginPath(); g.arc(Math.cos(a) * r, Math.sin(a) * r, 1.6, 0, TAU); g.fill(); } }
-    if (kind === 'apple') { g.fillStyle = season === 'autumn' ? '#d22a1e' : '#ffe2ea'; for (let i = 0; i < 14; i++) { const a = R() * TAU, r = Math.sqrt(R()) * 40; g.beginPath(); g.arc(Math.cos(a) * r, Math.sin(a) * r, 3, 0, TAU); g.fill(); } }
+    for (let i = 0; i < 70; i++) { const a = R() * TAU, r = Math.sqrt(R()) * 52; g.fillStyle = R() < 0.5 ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.12)'; g.beginPath(); g.arc(Math.cos(a) * r, Math.sin(a) * r, 2 + R() * 3, 0, TAU); g.fill(); }
     return c;
   }
+  function mix(a, b, t) { const p = parseInt(a.slice(1), 16), q = parseInt(b.slice(1), 16), f = (x, y) => Math.round(x + (y - x) * t); return 'rgb(' + f(p >> 16, q >> 16) + ',' + f((p >> 8) & 255, (q >> 8) & 255) + ',' + f(p & 255, q & 255) + ')'; }
+  function mute(hex, dark, desat) { // darker and greyer, returns #rrggbb
+    const n = parseInt(hex.slice(1), 16); let r = n >> 16, g = (n >> 8) & 255, b = n & 255; const l = 0.3 * r + 0.59 * g + 0.11 * b;
+    r = (r + (l - r) * desat) * (1 - dark); g = (g + (l - g) * desat) * (1 - dark); b = (b + (l - b) * desat) * (1 - dark);
+    return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+  }
+  // cream outline around a sprite (the player's car), px = thickness in world units
+  ART.outline = function (sp, px) {
+    if (sp._ol) return sp._ol;
+    const src = sp.c, r = px * CS, pad = Math.ceil(r) + 2, c = mk(src.width + pad * 2, src.height + pad * 2), g = c.getContext('2d');
+    for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; g.drawImage(src, pad + Math.cos(a) * r, pad + Math.sin(a) * r); }
+    g.drawImage(src, pad, pad);
+    g.globalCompositeOperation = 'source-in'; g.fillStyle = '#fff6dc'; g.fillRect(0, 0, c.width, c.height);
+    sp._ol = { c, ox: sp.ox + pad, oy: sp.oy + pad };
+    return sp._ol;
+  };
   function shade(hex, f) {
     const n = parseInt(hex.slice(1), 16); let r = n >> 16, gg = (n >> 8) & 255, b = n & 255;
     if (f > 0) { r += (255 - r) * f; gg += (255 - gg) * f; b += (255 - b) * f; } else { r *= 1 + f; gg *= 1 + f; b *= 1 + f; }

@@ -17,14 +17,19 @@
   const CAR_R = 10;            // collision circle radius (two circles per car)
   const CAR_OFF = 8;           // circle offset from centre along heading
   const DRIFT_T1 = 0.5, DRIFT_T2 = 1.2; // seconds of sliding for the gold / red mini-boost
+  const CD_STEP = 0.7;         // countdown: 3, 2, 1 at 0.7 s each
+  DRD.CD_STEP = CD_STEP;
   DRD.DRIFT_T2 = DRIFT_T2;
   const TUNE = DRD.TUNE = { assist: 1, yawK: 13, shoulder: 0.7, tapLock: 0.3, tapRamp: 5.5 };
 
   DRD.CLASSES = [
-    { id: 'sunday', name: 'Sunday Driver', vmax: 292, ai: { speed: 0.865, spread: 0.08, look: 0.95, drift: 0.25, avoid: 0.3, items: 0.45, mistake: 0.09, short: 0.15, line: 0.55, rbAhead: 1, rbBehind: 0.7 } },
-    { id: 'commuter', name: 'Commuter', vmax: 318, ai: { speed: 0.93, spread: 0.06, look: 1.0, drift: 0.65, avoid: 0.62, items: 0.75, mistake: 0.06, short: 0.45, line: 0.8, rbAhead: 0.9, rbBehind: 0.9 } },
-    { id: 'rally', name: 'Rally Pro', vmax: 344, ai: { speed: 0.985, spread: 0.02, look: 1.06, drift: 0.95, avoid: 0.92, items: 1, mistake: 0.015, short: 0.8, line: 0.95, rbAhead: 0.55, rbBehind: 1 } }
+    { id: 'sunday', name: 'Sunday Driver', vmax: 292, ai: { speed: 1.0, spread: 0.16, look: 0.95, drift: 0.25, avoid: 0.3, items: 0.45, mistake: 0.09, short: 0.15, line: 0.55, rbAhead: 1, rbBehind: 0.3 } },
+    { id: 'commuter', name: 'Commuter', vmax: 318, ai: { speed: 1.01, spread: 0.2, curve: 2, look: 1.06, drift: 0.85, avoid: 0.8, items: 0.75, mistake: 0.03, short: 0.45, line: 0.95, rbAhead: 0.9, rbBehind: 0.3, leash: 1 } },
+    { id: 'rally', name: 'Rally Pro', vmax: 344, ai: { speed: 1.03, spread: 0.12, look: 1.06, drift: 0.95, avoid: 0.92, items: 1, mistake: 0.015, short: 0.8, line: 0.95, rbAhead: 0.55, rbBehind: 0.3, leash: 1 } }
   ];
+  DRD.DRIFT_GUARD = 0.1; // radians the nose may point past the road (inward) in a player's drift before the thumb's extra tightness fades
+  DRD.DRIFT_TIGHT = 0.55; // drift arc: thumb in the middle = 0.5x TURN, at the edge = (0.5 + this)x TURN
+  const LAP_PUSH = [1, 1.012, 1.025]; // AI find a little more pace each lap, so the race builds
   DRD.AUTOPILOT = { speed: 1.0, look: 1.06, drift: 0.95, avoid: 0.95, items: 1, mistake: 0, short: 0.5, line: 0.95, rbAhead: 0, rbBehind: 0 };
 
   DRD.RIGS = [
@@ -44,6 +49,16 @@
     { name: 'Hunting Plaid', need: 10, body: '#b02a22', dark: '#5e130f', roof: '#c8382e', plaid: '#1b1b1b' },
     { name: 'Gold Rush', need: 15, body: '#d8a923', dark: '#8a6510', roof: '#f2cf55', stripe: '#2b1d12' }
   ];
+  // medal race times (s) per track and class: gold = the AI winner's average after the Nov 15 retune
+  // (node tools/medals.js 6), silver = gold + 4%, bronze = gold + 9%. Mirror roads use the same times.
+  DRD.MEDALS = {"sugarbush":[79.5,73,67.4],"foliage":[86.4,81.2,74.2],"notch":[89,85.1,78.6],"milkrun":[75.7,76.4,69.8]};
+  DRD.medal = function (trackId, cls, time) {
+    const row = DRD.MEDALS[String(trackId).replace(/_m$/, '')]; if (!row) return null;
+    const g = row[cls], cuts = [['gold', g], ['silver', g * 1.04], ['bronze', g * 1.09]];
+    let got = null; for (let i = cuts.length - 1; i >= 0; i--) if (time <= cuts[i][1]) got = i;
+    const next = got === 0 ? null : cuts[got == null ? 2 : got - 1];
+    return { medal: got == null ? null : cuts[got][0], next: next ? { name: next[0], gap: time - next[1] } : null, cuts };
+  };
   DRD.DRIVERS = ['Hazel', 'Otis', 'Birdie', 'Gus', 'Dot', 'Juniper', 'Earl', 'Mabel'];
   DRD.ITEMS = ['syrup', 'donut', 'pine', 'snow', 'hay'];
   DRD.POINTS = [10, 8, 6, 4, 2, 1];
@@ -75,7 +90,7 @@
     R.items = R.mode !== 'tt' && o.items !== false;
     R.rand = DRD.rng(o.seed != null ? o.seed : 7);
     R.surf = surfTable(T.season);
-    R.t = 0; R.raceT = 0; R.phase = 'countdown'; R.countdown = o.countdown != null ? o.countdown : 3.0;
+    R.t = 0; R.raceT = 0; R.phase = 'countdown'; R.countdown = o.countdown != null ? o.countdown : 3 * CD_STEP;
     R.ev = []; R.objs = []; R.proj = [];
     R.crates = T.crates.map((c) => ({ x: c.x, y: c.y, alive: true, respawn: 0, bonus: !!c.bonus, spin: R.rand() * 6 }));
     R.tractor = T.tractor ? { x: T.tractor.x, y: T.tractor.y, u: -T.tractor.reach, dir: 1, h: 0, moving: false, warn: 0, t: T.tractor.phase || 0 } : null;
@@ -112,8 +127,11 @@
     // spread the field: each AI gets its own pace (a few are clearly slower on easy classes)
     { const ai = R.cars.filter((c) => !c.isPlayer), sp = R.cls.ai.spread || 0, ord = ai.map((c, i) => i);
       for (let i = ord.length - 1; i > 0; i--) { const j = Math.floor(R.rand() * (i + 1)); const t = ord[i]; ord[i] = ord[j]; ord[j] = t; }
-      ai.forEach((c, i) => { c.ai.speedMul *= 1 - sp * ord[i] / Math.max(1, ai.length - 1);
-        const k = c.ai.sk; c.ai.sk = Object.assign({}, k, { mistake: k.mistake * (0.4 + R.rand() * 1.5), line: clamp(k.line + (R.rand() - 0.5) * 0.25, 0.3, 1), drift: clamp(k.drift + (R.rand() - 0.5) * 0.3, 0, 1), items: clamp(k.items + (R.rand() - 0.5) * 0.3, 0.2, 1) }); }); }
+      ai.forEach((c, i) => { c.ai.speedMul *= 1 - sp * Math.pow(ord[i] / Math.max(1, ai.length - 1), R.cls.ai.curve || 1); // curve > 1 keeps the front close and strings out the back
+        const k = c.ai.sk; c.ai.sk = Object.assign({}, k, { mistake: k.mistake * (0.4 + R.rand() * 1.5), line: clamp(k.line + (R.rand() - 0.5) * 0.25, 0.3, 1), drift: clamp(k.drift + (R.rand() - 0.5) * 0.3, 0, 1), items: clamp(k.items + (R.rand() - 0.5) * 0.3, 0.2, 1) }); });
+      // no runaway leader: the fastest AI stays within 2% of the second fastest (pace jitter included)
+      const bySp = ai.slice().sort((a, b) => b.ai.speedMul - a.ai.speedMul);
+      if (bySp.length > 1) bySp[0].ai.speedMul = Math.min(bySp[0].ai.speedMul, bySp[1].ai.speedMul * 1.02); }
     R.player = R.cars.find((c) => c.isPlayer) || null;
     if (R.mode === 'tt' && R.player) { R.player.item = 'donut'; R.player.itemN = 3; }
     R.order = R.cars.slice();
@@ -171,23 +189,23 @@
     const R = this, dt = DT;
     R.t += dt;
     if (R.phase === 'countdown') {
-      const before = Math.ceil(R.countdown);
+      const before = Math.ceil(R.countdown / CD_STEP - 1e-6);
       R.countdown -= dt;
-      const after = Math.ceil(R.countdown);
+      const after = Math.ceil(R.countdown / CD_STEP - 1e-6);
       if (after !== before && after > 0) R.emit('count', null, { n: after });
       // engines rev on the grid; drift held at GO = no penalty, just fun
       for (const c of R.cars) {
         c.steer += (c.inp.steer - c.steer) * 0.1;
         // rocket start: hold DRIFT once the "1" shows. Held through "2" as well = wheelspin.
-        if (c.auto && c.ai && R.countdown < 0.9 && !c.ai.revDecided) { c.ai.revDecided = true; c.ai.rocket = R.rand() < c.ai.sk.drift * 0.75; }
+        if (c.auto && c.ai && R.countdown < CD_STEP * 0.85 && !c.ai.revDecided) { c.ai.revDecided = true; c.ai.rocket = R.rand() < c.ai.sk.drift * 0.75; }
         const rev = c.auto ? (c.ai && c.ai.rocket) : c.inp.drift;
         c.revT = rev ? (c.revT || 0) + dt : 0;
       }
       if (R.countdown <= 0) {
         R.phase = 'race'; R.raceT = 0; R.emit('go', null);
         for (const c of R.cars) {
-          if (c.revT > 0.12 && c.revT < 1.2) { c.boostT = 0.9; c.boostDur = 0.9; c.vx += Math.cos(c.h) * 90; c.vy += Math.sin(c.h) * 90; R.emit('rocket', c); }
-          else if (c.revT >= 1.2) { c.bogT = 0.7; R.emit('bog', c); }
+          if (c.revT > 0.1 && c.revT < CD_STEP * 1.2) { c.boostT = 0.9; c.boostDur = 0.9; c.vx += Math.cos(c.h) * 90; c.vy += Math.sin(c.h) * 90; R.emit('rocket', c); }
+          else if (c.revT >= CD_STEP * 1.2) { c.bogT = 0.7; R.emit('bog', c); }
           c.revT = 0;
         }
       }
@@ -258,7 +276,7 @@
     const sf = cell < 0 ? S.OUT : T.surf[cell];
     c.lastSurf = c.surf; c.surf = sf;
     const sp = R.surf[sf] || R.surf[S.ROAD];
-    const vmaxBase = R.cls.vmax * (c.auto && !c.finished && !c.isPlayer ? c.ai.speedMul * c.ai.rb : 1) * (c.ai && c.ai.mistake === 'dozy' ? 0.9 : 1);
+    const vmaxBase = R.cls.vmax * (c.auto && !c.finished && !c.isPlayer ? c.ai.speedMul * c.ai.rb * LAP_PUSH[clamp(c.lapIdx, 0, 2)] : 1) * (c.ai && c.ai.mistake === 'dozy' ? 0.9 : 1);
     const fx = Math.cos(c.h), fy = Math.sin(c.h), rx = -fy, ry = fx;
     let vf = c.vx * fx + c.vy * fy, vr = c.vx * rx + c.vy * ry;
     const spd = Math.abs(vf);
@@ -293,7 +311,7 @@
     // tap (digital) steering for the player: a little less lock at speed so a held side doesn't overshoot
     const tapP = c.isPlayer && !c.auto && !inp.analog;
     const tgt = clamp(inp.steer, -1, 1) * (tapP ? 1 - TUNE.tapLock * clamp((spd - 120) / 200, 0, 1) : 1);
-    const rate = inp.analog ? 14 : (Math.abs(tgt) < Math.abs(c.steer) || Math.sign(tgt) !== Math.sign(c.steer) ? 9 : (tapP ? TUNE.tapRamp : 5.5));
+    const rate = inp.analog ? (c.isPlayer && !c.auto ? 11 : 14) : (Math.abs(tgt) < Math.abs(c.steer) || Math.sign(tgt) !== Math.sign(c.steer) ? 9 : (tapP ? TUNE.tapRamp : 5.5));
     c.steer += clamp(tgt - c.steer, -rate * dt, rate * dt);
 
     if (c.airT > 0) {
@@ -364,8 +382,14 @@
     // yaw
     const gain = clamp(spd / 95, 0, 1) * (1 - 0.2 * clamp(spd / R.cls.vmax, 0, 1.3));
     if (c.drifting) {
-      const into = clamp(c.steer * c.driftDir, -1, 1);
-      yawT = c.driftDir * TURN * (0.7 + (into >= 0 ? 0.6 * into : 0.66 * into)) * clamp(spd / 170, 0.5, 1); // full counter-steer ≈ straight
+      let into = clamp(c.steer * c.driftDir, -1, 1);
+      // forgiving slide for the player: once the nose points past the road toward the inside, the thumb's extra
+      // tightness fades out (back to the base 0.5x arc), so a thumb held at full lock doesn't spin you onto the inside verge
+      if (c.isPlayer && !c.auto && into > 0 && c.k >= 0 && c.k < T.N) {
+        const past = -wrapA(Math.atan2(T.TY[c.k], T.TX[c.k]) - c.h) * c.driftDir;
+        if (past > DRD.DRIFT_GUARD) into *= clamp(1 - (past - DRD.DRIFT_GUARD) / 0.2, 0, 1);
+      }
+      yawT = c.driftDir * TURN * (0.5 + (into >= 0 ? DRD.DRIFT_TIGHT * into : 0.46 * into)) * clamp(spd / 170, 0.5, 1); // thumb in the middle = wide arc, edge = tight, full counter-steer ≈ straight
     } else {
       yawT = c.steer * TURN * gain * (vf < 0 ? -1 : 1);
       if (sf === S.ICE) yawT *= 0.8;
@@ -678,7 +702,7 @@
         else c.ai.fwdT = 0.9;
       }
       if (c.progT > 6) respawn(R, c);
-    } else if (c.progT > 5.5) respawn(R, c);
+    } else if (c.progT > 4) respawn(R, c);
   }
 
   function rank(R) {
@@ -719,6 +743,8 @@
         const gap = c.dist - ref.dist;
         A.rb = gap > 0 ? 1 - Math.min(0.05, Math.max(0, gap - 150) / 22000) * sk.rbAhead : 1 + Math.min(0.04, Math.max(0, -gap - 150) / 25000) * sk.rbBehind;
       } else A.rb = 1;
+      // leash on a runaway AI leader: more than ~1 s clear of 2nd, it eases off (up to 3%) so 2nd place still has someone to chase
+      const o = R.order; if (!c.isPlayer && !c.finished && o[0] === c && o[1]) { const lead = c.dist - o[1].dist; if (lead > 280) A.rb *= 1 - Math.min(0.03, (lead - 280) / 12000) * (sk.leash || 0); }
       // lane wander
       A.laneT -= 0.12; if (A.laneT <= 0) { A.laneT = 1.5 + R.rand() * 2.5; A.laneGoal = (R.rand() - 0.5) * 50 * (1.2 - sk.line); }
       // defend: the player is right on our bumper -> drift across to cover their line for a moment

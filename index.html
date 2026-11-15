@@ -30,14 +30,22 @@
     </div>
     <div class="tag">top-down item-battle kart racer</div>
     <div class="grow"></div>
-    <div class="panel">
+    <div class="panel" id="panMain">
       <button id="btnDaily" class="daily"></button>
-      <button id="btnRace" class="big primary">RACE!</button>
-      <div class="row3">
-        <button id="btnGP" class="mid">Grand Prix<small>4 tracks</small></button>
-        <button id="btnPick" class="mid">Pick track<small>single race</small></button>
-        <button id="btnTT" class="mid">Time trial<small>beat your ghost</small></button>
+      <button id="btnRace" class="big primary">RACE!<small id="raceCls"></small></button>
+      <div class="row">
+        <button id="btnModes" class="mid">Modes<small>grand prix · tracks · time trial</small></button>
+        <button id="btnGarage" class="mid">Garage<small id="garageSub">class · car · paint</small></button>
       </div>
+    </div>
+    <div class="panel sub" id="panModes" hidden>
+      <div class="subhead"><button class="back" data-back aria-label="Back">‹</button><h2>Modes</h2></div>
+      <button id="btnGP" class="mid">Grand Prix<small>all 4 tracks, points after each race</small></button>
+      <button id="btnPick" class="mid">Pick track<small>single race on any road</small></button>
+      <button id="btnTT" class="mid">Time trial<small>beat your ghost</small></button>
+    </div>
+    <div class="panel sub" id="panGarage" hidden>
+      <div class="subhead"><button class="back" data-back aria-label="Back">‹</button><h2>Garage</h2></div>
       <div class="chips" id="clsChips"></div>
       <div class="rigs" id="rigs"></div>
       <div class="paints" id="paints"></div>
@@ -66,6 +74,7 @@
       <h2 id="rsHead" class="place">1st place</h2>
       <div class="sub" id="rsTrack"></div>
       <div class="table" id="rsTable"></div>
+      <div class="medalline" id="rsMedal" hidden></div>
       <div class="note" id="rsNote"></div>
       <div class="unlock" id="rsUnlock" hidden></div>
       <button id="btnShare" class="mid share" hidden>Share result</button>

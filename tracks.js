@@ -391,7 +391,9 @@
       if (T.nearB[c] < 0 && R() < 0.75) continue;
       let bad = false; for (const k of keepOut) if ((x - k.x) ** 2 + (y - k.y) ** 2 < k.r * k.r) { bad = true; break; } if (bad) continue;
       const kind = kinds[Math.floor(R() * kinds.length)];
-      const r = (kind === 'pine' ? 26 : 30) + R() * 22 + Math.min(18, b * 0.05);
+      let r = (kind === 'pine' ? 26 : 30) + R() * 22 + Math.min(18, b * 0.05);
+      // no canopy over the road or shoulder: the canopy edge (~0.95 r) stays outside the corridor wall
+      if (b < r * 0.95 + 4) { r = (b - 4) / 0.95; if (r < 24) continue; }
       D.push({ k: 'tree', v: kind, x, y, r, a: R() * Math.PI * 2, seed: Math.floor(R() * 1e6) });
     }
     // sort big trees after small ones so canopies overlap nicely
@@ -428,7 +430,7 @@
     },
     {
       id: 'foliage', name: 'Foliage Fling', season: 'autumn', seed: 22,
-      blurb: 'Peak color. Leaf piles hide the road edge and the covered bridge is one car wide... almost.',
+      blurb: 'Peak color. Slippery leaf piles on the corners and a covered bridge that is one car wide... almost.',
       pts: [[500, 1700], [1000, 1820], [1600, 1800], [2100, 1700], [2400, 1450], [2420, 1080], [2150, 880], [1800, 960], [1550, 1180], [1250, 1150], [1150, 850], [1350, 560], [1750, 450], [2100, 330], [2050, 110], [1600, 80], [1050, 140], [650, 280], [380, 560], [300, 950], [350, 1350]],
       w: 126,
       bridge: { s: [19, 0], len: 230, w: 82 }, river: { a: 520, b: 420 },
@@ -442,7 +444,7 @@
       heaves: [[3, 0]],
       crates: [[1, 0], [11, 0], [16, 100]],
       scCrates: [{ sc: 0, t: 0.5 }],
-      edgeLeaves: true,
+      edgeLeaves: false, // true = loose leaves drawn over the road edge (the old look); off so the edge reads
       decor: { trees: ['maple', 'maple', 'oak', 'birch', 'pine'], density: 1.15,
         props: [{ type: 'barn', s: [4, 0], side: -1, off: 150 }, { type: 'orchard', s: [8, 0], side: 1, off: 40 }, { type: 'church', s: [16, 0], side: -1, off: 140 },
           { type: 'farmhouse', s: [12, 0], side: 1, off: 110 }, { type: 'pumpkins', s: [1, 100], side: 1, off: 50 }] }
