@@ -10,6 +10,11 @@ body { position: fixed; inset: 0; width: 100%; }
 #probe { position: fixed; visibility: hidden; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); pointer-events: none; }
 #stage { position: absolute; left: 50%; top: 0; transform: translateX(-50%); overflow: hidden; touch-action: none; }
 #c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#gl { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: none; background: #2b1d12; transition: opacity .3s; }
+#gl.off { opacity: 0; }
+.medalcount { text-align: center; font-weight: 800; font-size: 13px; letter-spacing: .06em; color: var(--cream); opacity: .92; margin-top: -2px; text-shadow: 0 2px 4px rgba(0,0,0,.7); }
+.garagerig { width: 240px; height: 90px; align-self: center; margin: -6px 0 -8px; }
+.rig canvas.r3d { transform: none; width: 46px; height: 27px; margin: 6px 0; }
 [hidden] { display: none !important; }
 button { font-family: var(--ui); cursor: pointer; touch-action: manipulation; border: 0; color: inherit; }
 

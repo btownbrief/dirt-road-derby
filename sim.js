@@ -436,6 +436,7 @@
       const nx = dx / d, ny = dy / d;
       c.x = C.X[k] + nx * lim; c.y = C.Y[k] + ny * lim;
       const vn = c.vx * nx + c.vy * ny;
+      if (vn > 0 && c.isPlayer && !c.auto) { playerWall(R, c, k, nx, ny, vn); return; }
       if (vn > 0) {
         c.vx -= nx * vn * 1.35; c.vy -= ny * vn * 1.35;
         const keep = R.T.season === 'winter' ? 0.975 : 0.965; // snowbanks are softer
@@ -446,6 +447,31 @@
         const into = fx * nx + fy * ny;
         if (into > 0.2 && c.spinT <= 0) { const side = (fx * -ny + fy * nx) > 0 ? 1 : -1; c.h += side * Math.min(0.06, into * 0.05); }
       }
+    }
+  }
+
+  // the human player's walls glance instead of gluing (AI cars keep the rule above, so AI lap times and medals don't move).
+  // A hit under ~35° keeps 75-95% of its speed and slides along the wall with the nose turned a little toward the road;
+  // a steeper hit keeps 40-60%. Grinding along a wall (small vn) just loses the into-the-wall part, never 3.5% a tick.
+  function playerWall(R, c, k, nx, ny, vn) {
+    const sp0 = Math.hypot(c.vx, c.vy) || 1;
+    let tx = -ny, ty = nx; let vt = c.vx * tx + c.vy * ty;
+    if (Math.abs(vt) < sp0 * 0.2) { const C = R.T.C; if (C.TX[k] * tx + C.TY[k] * ty < 0) { tx = -tx; ty = -ty; } vt = c.vx * tx + c.vy * ty; } // head-on: pick the way the road runs
+    else if (vt < 0) { tx = -tx; ty = -ty; vt = -vt; }
+    if (vn > 50 && R.t - (c.wallAt != null ? c.wallAt : -9) > 0.3) { // one hit per 0.3 s (a tractor shoving you into a wall isn't 30 hits)
+      c.wallAt = R.t;
+      const ang = Math.asin(clamp(vn / sp0, 0, 1)), A35 = 0.61;
+      const keep = ang < A35 ? 0.95 - 0.2 * (ang / A35) : 0.6 - 0.2 * clamp((ang - A35) / (Math.PI / 2 - A35), 0, 1);
+      const sp = Math.max(Math.abs(vt) * (R.T.season === 'winter' ? 0.975 : 0.965), sp0 * keep), out = Math.min(40, vn * 0.15);
+      c.vx = tx * sp - nx * out; c.vy = ty * sp - ny * out;
+      // the nose follows the wall, turned ~8° toward the road, so the next tick doesn't drive back into it
+      const want = Math.atan2(ty - ny * 0.14, tx - nx * 0.14), fwd = Math.cos(c.h) * tx + Math.sin(c.h) * ty > -0.2;
+      if (c.spinT <= 0 && fwd) { c.h += wrapA(want - c.h) * (ang < A35 ? 0.85 : 0.6); c.yaw *= 0.3; }
+      c.walls++; R.emit('wall', c, { v: vn, x: c.x + nx * 10, y: c.y + ny * 10 });
+    } else {
+      c.vx -= nx * vn * 1.1; c.vy -= ny * vn * 1.1; // grinding: slide along it
+      const fx = Math.cos(c.h), fy = Math.sin(c.h), into = fx * nx + fy * ny;
+      if (into > 0.05 && c.spinT <= 0) { const side = (fx * -ny + fy * nx) > 0 ? 1 : -1; c.h += side * Math.min(0.08, into * 0.12); }
     }
   }
 

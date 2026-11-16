@@ -1,6 +1,6 @@
 # Dirt Road Derby
 
-Dirt Road Derby: a top-down item-battle kart racer on Vermont back roads. Drift, boost and toss pinecones.
+Dirt Road Derby: an item-battle kart racer on Vermont back roads. Drift, boost and toss pinecones.
 
 Play: https://play.btownbrief.com/dirt-road-derby/
 

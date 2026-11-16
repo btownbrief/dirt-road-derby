@@ -29,6 +29,8 @@
   A.suspend = function () { try { if (ctx && ctx.state === 'running') ctx.suspend(); } catch (e) {} };
   A.resume = function () { try { if (ctx && ctx.state !== 'running') { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); } } catch (e) {} };
   const ok = () => ctx && A.sound && !A.quiet;
+  A.pan = 0; // -1 left .. 1 right, read by the next sfx call (rival hits come from where they are)
+  function out() { if (!A.pan || !ctx.createStereoPanner) return sfxG; const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, A.pan)); p.connect(sfxG); return p; }
 
   function osc(type, f0, f1, t0, dur, vol, dest, attack) {
     const o = ctx.createOscillator(), g = ctx.createGain();
@@ -36,14 +38,14 @@
     if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur);
     const at = attack || 0.005;
     g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + at); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    o.connect(g); g.connect(dest || sfxG); o.start(t0); o.stop(t0 + dur + 0.05);
+    o.connect(g); g.connect(dest || out()); o.start(t0); o.stop(t0 + dur + 0.05);
   }
   function noise(t0, dur, vol, type, freq, q, f1, dest) {
     const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
     const f = ctx.createBiquadFilter(), g = ctx.createGain();
     f.type = type; f.frequency.setValueAtTime(freq, t0); if (f1) f.frequency.exponentialRampToValueAtTime(f1, t0 + dur); f.Q.value = q || 1;
     g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    s.connect(f); f.connect(g); g.connect(dest || sfxG); s.start(t0, Math.random() * 0.5); s.stop(t0 + dur + 0.02);
+    s.connect(f); f.connect(g); g.connect(dest || out()); s.start(t0, Math.random() * 0.5); s.stop(t0 + dur + 0.02);
   }
 
   // ---------------------------------------------------------- engine (continuous)
@@ -122,6 +124,7 @@
     for (let i = 0; i < (big ? 26 : 14); i++) noise(t + 0.1 + Math.random() * d * 0.8, 0.03, 0.12 + Math.random() * 0.1, 'bandpass', 1600 + Math.random() * 1400, 2);
     if (big) for (let i = 0; i < 6; i++) { osc('square', 560, 540, t + 0.2 + i * 0.22, 0.09, 0.05); osc('square', 845, 830, t + 0.2 + i * 0.22, 0.09, 0.035); }
   };
+  A.incoming = (k) => { if (!ok()) return; const t = ctx.currentTime, f = 880 + k * 500; osc('square', f, f, t, 0.05, 0.07); osc('square', f * 1.26, f * 1.26, t + 0.06, 0.06, 0.07); }; // rising two-note warning
   A.whoosh = (up) => { if (!ok()) return; const t = ctx.currentTime; noise(t, 0.45, 0.22, 'bandpass', up ? 700 : 2200, 2.2, up ? 2600 : 600); };
   A.pass = (up) => { if (!ok()) return; const t = ctx.currentTime; osc('sine', up ? 700 : 500, up ? 1000 : 350, t, 0.12, 0.07); };
   A.tractor = (vol) => { // putt putt, called each beat by game when near

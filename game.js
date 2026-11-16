@@ -12,12 +12,19 @@
   const ordinal = (n) => n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
   const fmt = (t) => { if (!isFinite(t)) return '--:--.--'; const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(2); };
   ART.painted = /[?&]art=1/.test(location.search);
+  // 3D chase view (view3d.js, three.js) unless WebGL is missing or ?view=top asks for the old top-down renderer (fallback only)
+  const glCanvas = $('gl');
+  let glCtx = null;
+  if (!/[?&]view=top/.test(location.search)) { try { glCtx = glCanvas.getContext('webgl2', { antialias: true, powerPreference: 'high-performance', alpha: true, stencil: false }); } catch (e) { glCtx = null; } } // alpha: rig snapshots for the results card / garage need a clear background
+  DRD.glCtx = glCtx;
+  if (!glCtx) glCanvas.style.display = 'none'; else glCanvas.classList.add('off');
 
   // ------------------------------------------------------------ save
   const KEY = 'drd.v1';
-  const defaults = { sound: true, music: true, buzz: true, steer: 'tap', cls: 0, rig: 0, track: 0, best: {}, tt: {}, gp: {}, hints: {}, races: 0, wins: 0, paint: 0, mirror: false, daily: {}, streak: { n: 0, last: '' } };
+  const defaults = { sound: true, music: true, buzz: true, steer: 'tap', prMax: 0, cls: 0, rig: 0, track: 0, best: {}, tt: {}, gp: {}, hints: {}, races: 0, wins: 0, paint: 0, mirror: false, daily: {}, streak: { n: 0, last: '' } };
   let save = Object.assign({}, defaults);
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && typeof s === 'object') save = Object.assign({}, defaults, s); } catch (e) {}
+  if (save.steer !== 'tap') save.steer = 'tap'; // "Steer: drag" is gone: one steering scheme
   function persist() { try { localStorage.setItem(KEY, JSON.stringify(save)); } catch (e) {} }
   function ghostKey(id) { return 'drd.ghost.' + id; }
   function loadGhost(id) { try { const g = JSON.parse(localStorage.getItem(ghostKey(id)) || 'null'); return g && g.f && g.f.length ? g : null; } catch (e) { return null; } }
@@ -32,8 +39,10 @@
     finishShownT: 0, resultsQueued: false, photo: false, photoDone: false,
     gp: null, ghost: null, ghostRec: null, ghostLapStart: 0, lastSplit: null,
     wheels: [], tracks: [], kb: { l: 0, r: 0, d: 0, drift: 0 }, touchUI: false, hintT: 0, prompt: null,
-    lastPlace: 0, frameMs: 16, weather: []
+    lastPlace: 0, frameMs: 16, weather: [],
+    use3D: !!glCtx, v3: null, alpha: 1, sSteer: 0, ctrlT: 0, camSkip: false, introT0: 0, incoming: null, passArrow: null, prDrop: 0
   };
+  const V3on = () => G.use3D && G.v3 && G.v3.ok && !G.v3.lost;
   function paintOk(k) { const P = DRD.PAINTS[k]; return !!P && (save.wins || 0) >= P.need; }
   function track(i) { if (!G.tracks[i]) G.tracks[i] = DRD.buildTrack(DRD.ALL_DEFS[i]); return G.tracks[i]; }
 
@@ -76,20 +85,15 @@
     for (const q of ptrs.values()) if (q.btn) q.btn = UI.btn[q.btn.key] || null;
     if (G.T) buildMinimap();
     lightC = null;
+    if (G.v3) G.v3.resize(cw, ch, save.prMax || 0);
   }
   function layoutButtons() {
     const b = {}, pb = ins.b + 14, small = Math.min(cw, ch) < 420;
     const R = small ? 44 : 50;
-    if (save.steer === 'tap') {
-      b.driftL = { x: ins.l + 16 + R, y: ch - pb - R, r: R, role: 'drift', label: 'DRIFT' };
-      b.driftR = { x: cw - ins.r - 16 - R, y: ch - pb - R, r: R, role: 'drift', label: 'DRIFT' };
-      if (UI.portrait) b.item = { x: cw / 2, y: ch - pb - R * 0.86, r: R * 0.86, role: 'item', label: 'ITEM' };
-      else b.item = { x: b.driftR.x - R * 0.15, y: b.driftR.y - R - R * 0.86 - 12, r: R * 0.86, role: 'item', label: 'ITEM' }; // landscape: keep the middle clear for the car
-    } else {
-      b.drift = { x: cw - ins.r - 16 - R * 1.08, y: ch - pb - R * 1.08, r: R * 1.08, role: 'drift', label: 'DRIFT' };
-      b.item = { x: b.drift.x - R * 0.35, y: b.drift.y - R * 1.08 - R * 0.86 - 18, r: R * 0.86, role: 'item', label: 'ITEM' };
-      b.brake = { x: b.drift.x - R * 1.08 - 46, y: ch - pb - 28, r: 27, role: 'brake', label: 'BRAKE' };
-    }
+    b.driftL = { x: ins.l + 16 + R, y: ch - pb - R, r: R, role: 'drift', label: 'DRIFT' };
+    b.driftR = { x: cw - ins.r - 16 - R, y: ch - pb - R, r: R, role: 'drift', label: 'DRIFT' };
+    if (UI.portrait) b.item = { x: cw / 2, y: ch - pb - R * 0.86, r: R * 0.86, role: 'item', label: 'ITEM' };
+    else b.item = { x: b.driftR.x - R * 0.15, y: b.driftR.y - R - R * 0.86 - 12, r: R * 0.86, role: 'item', label: 'ITEM' }; // landscape: keep the middle clear for the car
     for (const k in b) b[k].key = k;
     UI.btn = b;
     const pbtn = $('pauseBtn'); pbtn.style.top = (ins.t + 10) + 'px'; pbtn.style.right = (ins.r + 10) + 'px';
@@ -120,6 +124,7 @@
     const x = e.clientX, y = e.clientY;
     const b = hitBtn(x, y);
     if (G.introT > 0) G.introT = Math.min(G.introT, 0.05); // a tap skips the fly-in
+    if (G.race && G.race.phase === 'countdown') G.camSkip = true; // ...and the grid camera swing
     const p = { role: b ? b.role : 'steer', x, y, x0: x, t: ++ptrSeq, btn: b };
     ptrs.set(e.pointerId, p);
     try { stage.setPointerCapture(e.pointerId); } catch (er) {}
@@ -131,9 +136,8 @@
     p.x = e.clientX; p.y = e.clientY;
     if (p.btn && Math.hypot(p.x - p.btn.x, p.y - p.btn.y) > p.btn.r * 1.8) {
       if (p.role === 'item' || p.role === 'brake') { p.role = 'steer'; p.x0 = p.x; p.t = ++ptrSeq; p.btn = null; }
-      else if (p.role === 'drift' && save.steer === 'tap' && !p.alsoSteer) { p.alsoSteer = true; p.t = ++ptrSeq; }
+      else if (p.role === 'drift' && !p.alsoSteer) { p.alsoSteer = true; p.t = ++ptrSeq; }
     }
-    if (p.role === 'steer' && save.steer === 'drag') { const R = 46; if (p.x - p.x0 > R) p.x0 = p.x - R; if (p.x0 - p.x > R) p.x0 = p.x + R; }
   }
   function onUp(e) { ptrs.delete(e.pointerId); }
   stage.addEventListener('pointerdown', onDown, { passive: false });
@@ -168,13 +172,42 @@
 
   // thumb steering: how far the thumb sits from the middle line is how hard you turn.
   // 8 px dead zone in the middle; ~108 px out (x <= 87 or x >= 303 on a 390 px phone) is full lock.
+  const STEER_RATE = 9;
+  DRD.SUNDAY_GRACE = 3; // Sunday Driver: seconds of immunity after your rig is spun (no mirror in a chase view, so no chained hits)
+  DRD.CALM_START = 8; // every class: rivals can't fire an item for the first 8 s after GO
+  DRD.syrupGrace = (P, c) => { const fx = Math.cos(c.h), fy = Math.sin(c.h), ox = c.x - fx * 30 - P.x, oy = c.y - fy * 30 - P.y, d = Math.hypot(ox, oy), v = Math.max(P.speed, 120);
+    if (ox * Math.cos(P.h) + oy * Math.sin(P.h) > 0 && d < 30 + v * 0.8) P.invT = Math.max(P.invT, (d + 45) / v); };
+  DRD.toWobble = (R, c) => { const p = R.T.point(c.s); c.spinKind = 'wobble'; c.spinFrom = c.h; c.spinTot = wrapA(Math.atan2(p.ty, p.tx) - c.h) * 0.5; c.spinDur = c.spinT = 0.6; c.invT = Math.max(c.invT, 1.5); };
   function thumbSteer(x) {
     const span = Math.max(100, Math.min(170, cw * 0.256)), dx = x - cw / 2, u = clamp((Math.abs(dx) - 8) / span, 0, 1);
     return Math.sign(dx) * u * (0.55 + 0.45 * u);
   }
+  // lane-keep nudge (Sunday Driver full, Commuter half, Rally Pro none): a person's thumb reacts ~0.2 s late, and in a low
+  // chase camera you see less of the corner. When the rig's current heading and turn rate would carry it off the road
+  // within ~0.8 s, up to 35% of a look-ahead correction is blended into the thumb. Off at full lock, while drifting or
+  // braking, while reversing, and when you're aiming into a shortcut.
+  const LANE_KEEP = { sunday: 0.35, commuter: 0.175 };
+  DRD.LANE_KEEP = LANE_KEEP;
+  function laneKeep(R, p, steer, thumb, busy) {
+    const w0 = LANE_KEEP[R.cls.id] || 0;
+    if (!w0 || busy || R.phase !== 'race' || p.finished || p.drifting || p.spinT > 0 || p.airT > 0 || !(p.vf > 70)) return steer;
+    const T = R.T, C = T.C; if (!(p.k >= 0) || p.k >= T.N || C.KIND[p.k] >= 0) return steer; // on a shortcut: hands off
+    const t = 0.8, v = p.speed, hm = p.h + (p.yaw || 0) * t * 0.5;
+    const qx = p.x + Math.cos(hm) * v * t, qy = p.y + Math.sin(hm) * v * t;
+    const qk = R.nearest(qx, qy); if (qk >= 0 && C.KIND[qk] >= 0) return steer; // heading into a shortcut mouth is a choice
+    let i0 = T.idx(p.s + v * t * 0.9), bi = i0, bd = 1e18;
+    for (let j = -10; j <= 10; j++) { const i = (i0 + j + T.N) % T.N, d = (qx - T.X[i]) ** 2 + (qy - T.Y[i]) ** 2; if (d < bd) { bd = d; bi = i; } }
+    const lat = (qx - T.X[bi]) * -T.TY[bi] + (qy - T.Y[bi]) * T.TX[bi], over = Math.abs(lat) - (T.HW[bi] - 14);
+    if (over <= 0) return steer;
+    const tp = R.lineAt(p.s + 60 + v * 0.42, 0.5, 0);
+    let d = Math.atan2(tp.y - p.y, tp.x - p.x) - p.h; while (d > Math.PI) d -= TAU; while (d < -Math.PI) d += TAU;
+    const corr = clamp(d * 2.3, -1, 1);
+    const w = w0 * clamp(over / 26, 0, 1) * (1 - clamp((Math.abs(thumb) - 0.85) / 0.15, 0, 1));
+    return steer + (corr - steer) * w;
+  }
   function readControls() {
     const R = G.race, p = R && R.player; if (!p) return;
-    const tap = save.steer === 'tap';
+    const tap = true;
     let steer = 0, drift = false, brake = false, analog = false, newest = -1, driftSide = 0, driftNewest = -1, sideL = false, sideR = false;
     for (const q of ptrs.values()) {
       if (q.role === 'drift') { drift = true; if (q.alsoSteer && q.t > newest) { newest = q.t; steer = tap ? thumbSteer(q.x) : q.x < cw / 2 ? -1 : 1; analog = tap; } else if (q.t > driftNewest && q.btn && tap) { driftNewest = q.t; driftSide = q.btn.key === 'driftL' ? -1 : 1; } }
@@ -183,7 +216,7 @@
         if (q.x < cw / 2) sideL = true; else sideR = true;
         if (q.t > newest) {
           newest = q.t;
-          if (tap) steer = thumbSteer(q.x); else steer = clamp((q.x - q.x0) / 46, -1, 1);
+          steer = thumbSteer(q.x);
           analog = true;
         }
       }
@@ -191,9 +224,15 @@
     // both thumbs down on opposite halves = brake, then reverse (after a 0.35 s grace, so rolling from one thumb to the other in an S-bend doesn't brake)
     if (tap && sideL && sideR) { if (G.bothT == null) G.bothT = R.t; if (R.t - G.bothT > 0.35) { brake = true; steer = 0; analog = false; } }
     else G.bothT = null;
+    const rawThumb = steer;
     if (G.kb.l || G.kb.r) { steer = (G.kb.r ? 1 : 0) - (G.kb.l ? 1 : 0); analog = false; }
     if (G.kb.drift) drift = true;
     if (G.kb.d) brake = true;
+    // chase view: the whole world yaws with you, so the thumb is low-passed a little (9 /s instead of the sim's 11 /s)
+    const sdt = clamp(R.t - (G.ctrlT || 0), 0, 0.1); G.ctrlT = R.t;
+    if (analog) G.sSteer += clamp(steer - G.sSteer, -STEER_RATE * sdt, STEER_RATE * sdt); else G.sSteer = steer;
+    if (analog) steer = G.sSteer;
+    if (analog && newest >= 0 && !G.kb.l && !G.kb.r) steer = laneKeep(R, p, steer, rawThumb, drift || brake);
     if (G.virt) { if (G.virt.steer != null) steer = G.virt.steer; if (G.virt.drift != null) drift = G.virt.drift; if (G.virt.brake != null) brake = G.virt.brake; }
     if (p.auto) return;
     p.inp.steer = steer; p.inp.drift = drift; p.inp.brake = brake; p.inp.analog = analog;
@@ -212,7 +251,7 @@
     ART.prep(T.season);
     // free the previous ground tiles right away (iOS Safari holds canvas memory until GC otherwise)
     if (G.ground) G.ground.tiles.forEach((t) => { if (t) ART.release(t.c); }); // reuse tile canvases instead of allocating ~50 MB per race
-    G.ground = ART.buildGround(T);
+    G.ground = G.use3D ? null : ART.buildGround(T); // the 3D view paints the ground itself (no tiles, no wait)
     const D = G.mode === 'daily' && !G.demo ? dailyInfo() : null;
     const cls = D ? D.cls : opts.cls != null ? opts.cls : save.cls;
     const seed = D ? D.seed : opts.seed != null ? opts.seed : Math.floor(Math.random() * 1e9);
@@ -220,10 +259,10 @@
     if (D) ro.nameSeed = D.seed;
     if (G.mode === 'gp' && G.gp) ro.nameSeed = G.gp.nameSeed;
     G.race = new DRD.Race(T, ro);
-    if (G.race.player) G.race.player.skin = ART.paintKey(save.rig, paintOk(save.paint) ? save.paint : 0);
-    if (G.demo) { G.race.countdown = 0.01; }
-    G.parts = []; G.pops = []; G.banner = null; G.timeScale = 1; G.slowT = 0; G.hitPause = 0; G.acc = 0; G.flash = 0; G.shake = 0;
-    G.resultsQueued = false; G.wrongT = 0; G.finishShownT = 0; G.photo = false; G.photoDone = false; G.prompt = null; G.itemShake = 0; G.itemName = null; G.lapDelta = null; G.bothT = null;
+    if (G.race.player) { G.race.player.skin = ART.paintKey(save.rig, paintOk(save.paint) ? save.paint : 0); G.race.player.paintI = paintOk(save.paint) ? save.paint : 0; }
+    if (G.demo) { G.race.countdown = 0.01; if (G.use3D) { for (let i = 0; i < 720; i++) G.race.step(); G.race.ev.length = 0; } } // title demo: start 6 s in, with the field strung out
+    G.parts = []; G.pops = []; G.banner = null; G.timeScale = 1; G.slowT = 0; G.hitPause = 0; G.acc = 0; G.flash = 0; G.hitV = 0; G.shake = 0;
+    G.resultsQueued = false; G.wrongT = 0; G.finishShownT = 0; G.photo = false; G.photoDone = false; G.prompt = null; G.itemShake = 0; G.itemName = null; G.lapDelta = null; G.bothT = null; G.spinLap = -9; G.dropPop = null;
     G.wheels = G.race.cars.map(() => null);
     G.virt = null; ptrs.clear(); G.kb = { l: 0, r: 0, d: 0, drift: 0 };
     const focus = G.race.player || G.race.cars[0];
@@ -237,6 +276,8 @@
     buildMinimap();
     initWeather();
     G.introT = G.demo || G.racedOnce ? 0 : 0.8; // brief fly-in before the countdown, first race of the session only
+    G.introT0 = G.introT; G.camSkip = false; G.alpha = 1; G.sSteer = 0; G.ctrlT = 0; G.incoming = null; G.passArrow = null; G.ghostNow = null;
+    if (G.v3) G.v3.resetCam();
     if (!G.demo) G.racedOnce = true;
     if (!G.demo) G.race.countdown = 3 * DRD.CD_STEP + DT; // 3, 2, 1 at 0.7 s each (the extra step makes the 3 show)
     G.hintT = 0;
@@ -250,6 +291,7 @@
     for (const e of R.ev) {
       const c = e.c >= 0 ? R.cars[e.c] : null;
       const mine = c && c === P;
+      A.pan = !mine && G.use3D && !G.demo ? panFor(c ? c.x : e.x, c ? c.y : e.y) : 0;
       const near = c ? camDist(c.x, c.y) < 420 : (e.x != null ? camDist(e.x, e.y) < 420 : false);
       const audible = !G.demo && (mine || near);
       switch (e.t) {
@@ -257,43 +299,65 @@
         case 'go': if (!G.demo) { A.go(); G.banner = { text: 'GO!', t: 0, dur: 0.9, big: true, col: '#ffd34d' }; buzz(25); A.applyMusic(true, 'race'); } break;
         case 'crate': burst(e.x, e.y, 'splinter', 14); if (audible) A.crate(); if (mine) buzz(12); break;
         case 'roulette': break;
-        case 'gotItem': if (mine && !G.demo) { A.gotItem(); G.itemPop = 0.4; G.itemName = { text: (e.n > 1 ? e.n + ' × ' : '') + ITEM_NAMES[e.item], t: 0 }; if (!save.hints.item) G.prompt = { text: 'Tap ITEM to use it!', t: 0, dur: 3, btn: 'item' }; } break;
-        case 'useItem': if (audible) { if (e.item === 'donut') A.boost(1); else if (e.item === 'pine' || e.item === 'snow') A.throw(); else A.thump(); }
-          if (mine) { save.hints.item = true; if (G.prompt && G.prompt.btn === 'item') G.prompt = null; }
-          if (e.item === 'donut' && c) { for (let i = 0; i < 10; i++) part(c.x, c.y, 'sugar'); if (mine) { G.kick = 0.8; G.shake = Math.max(G.shake, 3); } }
+        case 'gotItem':
+          // a calm start on every class: no rival can fire anything for the first 8 s after GO (their roulette just runs long)
+          if (c && !mine && !G.demo && P && R.raceT < DRD.CALM_START) { c.item = null; c.itemN = 0; c.inp.use = false; c.roulette = DRD.CALM_START - R.raceT + 0.25 + (c.i * 0.29 % 1) * 1.2; break; } // staggered, so the pack doesn't all fire at once at 8 s
+          if (mine && !G.demo) { A.gotItem(); G.itemPop = 0.4; G.itemName = { text: (e.n > 1 ? e.n + ' × ' : '') + ITEM_NAMES[e.item], t: 0 }; if (!save.hints.item) G.prompt = { text: 'Tap ITEM to use it!', t: 0, dur: 3, btn: 'item' }; } break;
+        case 'useItem':
+          // Sunday Driver: a pinecone or snowball thrown at you from point-blank (no time to see or dodge it) bounces off
+          if (P && c && c !== P && R.cls.id === 'sunday' && (e.item === 'pine' || e.item === 'snow') && !P.finished) {
+            const dx = P.x - c.x, dy = P.y - c.y; if (dx * dx + dy * dy < 125 * 125 && dx * Math.cos(c.h) + dy * Math.sin(c.h) > 0) P.invT = Math.max(P.invT, 0.5);
+          }
+          // ...and syrup dropped right in front of you (under ~0.8 s away, too close to steer round) doesn't catch you
+          if (P && c && c !== P && R.cls.id === 'sunday' && e.item === 'syrup' && !P.finished) DRD.syrupGrace(P, c);
+          if (audible) { if (e.item === 'donut') A.boost(1); else if (e.item === 'pine' || e.item === 'snow') A.throw(); else A.thump(); }
+          if (mine) { save.hints.item = true; if (G.prompt && G.prompt.btn === 'item') G.prompt = null; if (e.item === 'syrup' || e.item === 'hay') { G.dropPop = { item: e.item, t: 0 }; buzz(10); } }
+          if (e.item === 'donut' && c) { for (let i = 0; i < 10; i++) part(c.x, c.y, 'sugar'); if (V3on()) G.v3.donut(c.i); if (mine) { G.kick = 0.8; G.shake = Math.max(G.shake, 3); G.speedT = 1.3; if (V3on()) G.v3.boost(); } }
           break;
         case 'hop': if (mine) A.hop(); break;
-        case 'rocket': if (mine) { A.boost(2); G.shake = Math.max(G.shake, 5); G.kick = 1; pop(c, 'ROCKET START!', '#ffd34d'); buzz(30); save.hints.rocket = (save.hints.rocket || 0) + 1; persist(); for (let i = 0; i < 16; i++) part(c.x - Math.cos(c.h) * 18, c.y - Math.sin(c.h) * 18, Math.random() < 0.5 ? 'orange' : 'smoke'); } break;
+        case 'rocket': if (mine) { A.boost(2); G.speedT = 0.9; if (V3on()) G.v3.boost(); G.shake = Math.max(G.shake, 5); G.kick = 1; pop(c, 'ROCKET START!', '#ffd34d'); buzz(30); save.hints.rocket = (save.hints.rocket || 0) + 1; persist(); for (let i = 0; i < 16; i++) part(c.x - Math.cos(c.h) * 18, c.y - Math.sin(c.h) * 18, Math.random() < 0.5 ? 'orange' : 'smoke'); } break;
         case 'bog': if (mine) { A.bog(); for (let i = 0; i < 14; i++) part(c.x - Math.cos(c.h) * 16, c.y - Math.sin(c.h) * 16, 'smoke', null, null, { size: 5, life: 0.9 }); } break;
         case 'draft': if (mine) { A.draft(); pop(c, 'SLIPSTREAM', '#cfeaff'); } break;
         case 'driftStart': break;
         case 'driftTier': if (mine) { A.driftTier(e.tier); buzz(6); } break;
-        case 'miniBoost': if (audible) A.boost(e.tier); if (mine) { G.kick = e.tier === 2 ? 0.9 : 0.5; G.shake = Math.max(G.shake, e.tier * 2); pop(c, e.tier === 2 ? 'SUPER BOOST!' : 'BOOST!', e.tier === 2 ? '#ff6a48' : '#ffd34d'); buzz(15); if (!save.hints.drift) { save.hints.drift = true; persist(); G.prompt = null; } } break;
-        case 'spin': if (audible) A.spin(); if (mine) { G.shake = Math.max(G.shake, 6); G.hitPause = 0.07; buzz(60); } break;
+        case 'miniBoost': if (audible) A.boost(e.tier); if (mine) { if (V3on()) G.v3.boost(); G.speedT = e.tier === 2 ? 1.15 : 0.6; G.kick = e.tier === 2 ? 0.9 : 0.5; G.shake = Math.max(G.shake, e.tier * 2); pop(c, e.tier === 2 ? 'SUPER BOOST!' : 'BOOST!', e.tier === 2 ? '#ff6a48' : '#ffd34d'); buzz(15); if (!save.hints.drift) { save.hints.drift = true; persist(); G.prompt = null; } } break;
+        case 'spin':
+          if (mine && R.cls.id === 'sunday') {
+            // Sunday Driver: the tractor only bumps you (no wobble), and a spin is followed by 3 s in which nothing can spin you again
+            if (e.kind === 'wobble' && G.tractorHitT === R.raceT) { c.spinT = 0; c.hits = Math.max(0, c.hits - 1); c.invT = 0.4; break; }
+            // ...a snowball (it rolls up from behind, where a chase view can't see) is a wobble, and at most one full spin
+            // a lap: after the first, a hit that lap is only a wobble
+            if (e.kind === 'spin') { const snow = R.ev.some((x) => x.t === 'hit' && x.c === c.i && x.item === 'snow'); if (snow || G.spinLap === c.lapIdx) DRD.toWobble(R, c); else G.spinLap = c.lapIdx; }
+            c.invT = Math.max(c.invT, c.spinT + DRD.SUNDAY_GRACE);
+          }
+          if (audible) A.spin();
+          if (mine) { G.shake = Math.max(G.shake, 6); G.hitPause = 0.07; buzz(60); if (V3on()) G.v3.shake(1.5); } break;
         case 'hit':
           if (e.item === 'syrup') { burst(e.x, e.y, 'syrup', 12); if (audible) A.splat(); }
           else if (e.item === 'hay') { burst(e.x, e.y, 'hay', 22); if (audible) A.thump(); }
           else if (e.item === 'pine') { burst(e.x, e.y, 'pine', 10); if (audible) A.knock(); }
           else { burst(e.x, e.y, 'snow', 22); if (audible) A.puff(); }
           if (P && e.by === P.i && !mine && !G.demo) buzz(20);
-          if (mine) { G.flash = 0.25; G.flashCol = 'rgba(255,90,60,'; const by = e.by != null && R.cars[e.by]; if (by && by !== c && !G.demo) pop(c, by.name + ' got you!', '#ff9a7a'); }
+          if (mine) { G.hitV = 0.55; if (V3on()) G.v3.shake(1.5); const by = e.by != null && R.cars[e.by]; if (by && by !== c && !G.demo) pop(c, by.name + ' got you!', '#ff9a7a', true); }
           break;
         case 'poof': burst(e.x, e.y, e.item === 'snow' ? 'snow' : e.item === 'hay' ? 'hay' : e.item === 'syrup' ? 'syrup' : 'pine', 10); if (near && !G.demo) A.puff(); break;
         case 'pineBounce': if (near && !G.demo) A.knock(); break;
-        case 'wall': if (audible) A.wall(e.v); burst(e.x, e.y, R.T.season === 'winter' ? 'snow' : 'dust', 6); if (mine) { G.shake = Math.max(G.shake, Math.min(5, e.v / 60)); buzz(10); } break;
+        case 'wall': if (audible) A.wall(e.v); burst(e.x, e.y, R.T.season === 'winter' ? 'snow' : 'dust', 6); if (mine) { G.shake = Math.max(G.shake, Math.min(5, e.v / 60)); buzz(10); if (e.v > 150 && V3on()) G.v3.shake(Math.min(1.5, e.v / 200)); } break;
         case 'bump': if (audible) A.bump(e.v); burst(e.x, e.y, 'spark', 6); if (mine || (P && e.other === P.i)) { G.shake = Math.max(G.shake, Math.min(4, e.v / 70)); buzz(12); } break;
-        case 'tractorHit': if (audible) A.thump(); if (mine) { G.shake = 7; G.hitPause = 0.08; buzz(50); } break;
+        case 'tractorHit': if (audible) A.thump(); if (mine) { G.tractorHitT = R.raceT; G.shake = 7; G.hitPause = 0.08; buzz(50); if (V3on()) G.v3.shake(1.5); } break;
         case 'heave': if (mine) { A.heave(e.big); G.shake = Math.max(G.shake, e.big ? 4 : 2); } if (c) burst(c.x, c.y, R.T.season === 'winter' ? 'snow' : 'dust', e.big ? 10 : 4); break;
-        case 'land': if (mine) { A.land(); G.shake = Math.max(G.shake, 4); buzz(25); } if (c) burst(c.x, c.y, R.T.season === 'winter' ? 'snow' : 'dust', 12); break;
-        case 'tow': if (mine) A.tow(); if (c) burst(c.x, c.y, 'dust', 16); break;
+        case 'land': if (mine) { A.land(); G.shake = Math.max(G.shake, 4); buzz(25); if (V3on()) G.v3.shake(1.2); } if (c) burst(c.x, c.y, R.T.season === 'winter' ? 'snow' : 'dust', 12); break;
+        case 'tow': if (mine) A.tow(); if (c) burst(c.x, c.y, 'dust', 16); if (c && V3on() && c.px != null) G.v3.tow(c.i, c.px, c.py); break;
         case 'lap': if (mine) { A.lap(e.final); if (e.final) A.musicMood('final'); G.banner = { text: e.final ? 'FINAL LAP!' : 'LAP ' + e.lap, t: 0, dur: 1.6, col: e.final ? '#ff8a3d' : '#fff', sub: fmt(e.time) }; lapGhost(c, e.time); lapDelta(c, e.time); } break;
         case 'finish': if (mine) onPlayerFinish(e); break;
         case 'place': if (mine && !G.demo && R.raceT > 3) { A.pass(e.to < e.from); if (R.cars.some((q) => q !== c && camDist(q.x, q.y) < 90 && Math.hypot(q.x - c.x, q.y - c.y) < 70)) A.whoosh(e.to < e.from); if (e.to < e.from) G.placePop = 0.5; } break;
         case 'done': break;
       }
     }
-    R.ev.length = 0;
+    R.ev.length = 0; A.pan = 0;
   }
+  // stereo: rival hits and crashes come from where they are on screen
+  function panFor(x, y) { if (x == null) return 0; const a = G.cam.a, lat = (x - G.cam.x) * -Math.sin(a) + (y - G.cam.y) * Math.cos(a); return clamp(lat / 180, -1, 1) * 0.75; }
 
   // ------------------------------------------------------------ particles
   const ITEM_NAMES = { syrup: 'Syrup slick', donut: 'Cider donut', pine: 'Pinecone', snow: 'Snowball', hay: 'Hay bale' };
@@ -307,16 +371,35 @@
     const cols = PCOL[type] || PCOL.dust;
     const a = Math.random() * TAU, sp = (opt && opt.sp) || (40 + Math.random() * 120);
     G.parts.push({ x, y, vx: vx != null ? vx : Math.cos(a) * sp, vy: vy != null ? vy : Math.sin(a) * sp, z: 0, vz: (opt && opt.vz) != null ? opt.vz : 40 + Math.random() * 80,
-      life: 0, max: (opt && opt.life) || 0.5 + Math.random() * 0.5, size: (opt && opt.size) || (2 + Math.random() * 3), col: cols[Math.floor(Math.random() * cols.length)], type, rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 12 });
+      life: 0, max: (opt && opt.life) || 0.5 + Math.random() * 0.5, size: (opt && opt.size) || (2 + Math.random() * 3), col: cols[Math.floor(Math.random() * cols.length)], type, rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 12, sv: 0.6 + Math.random() * 0.8 });
   }
   function burst(x, y, type, n) { if (x == null || camDist(x, y) > 900) return; for (let i = 0; i < n; i++) part(x, y, type, null, null, { sp: 60 + Math.random() * 160, vz: 60 + Math.random() * 120, size: type === 'splinter' || type === 'hay' ? 2.5 + Math.random() * 3 : null }); }
-  function pop(c, text, col) { if (G.demo) return; G.pops = [{ text, col: col || '#fff', t: 0 }]; } // one at a time, drawn beside your car (never on the road ahead)
+  function pop(c, text, col, top) { if (G.demo) return; G.pops = [{ text, col: col || '#fff', t: 0, top: !!top }]; } // one at a time, beside your car (never on the road ahead); "X got you!" sits centred in the top third
+  // every call-out stays inside the screen with a 12 px margin, at its largest (pop-in) scale too
+  function popPlace(q, px, py, gap) {
+    const s = 1 + 0.3 * Math.max(0, 1 - q.t * 7);
+    let size = q.top ? 20 : 18; ctx.font = size + 'px "Alfa Slab One", serif'; let w = ctx.measureText(q.text).width;
+    const room = cw - 24 - 4; if (w * 1.3 > room) { size = Math.floor(size * room / (w * 1.3)); ctx.font = size + 'px "Alfa Slab One", serif'; w = ctx.measureText(q.text).width; }
+    let cx, y;
+    if (q.top) { cx = cw / 2; y = (G.use3D ? Math.max(ins.t + 150, ch * (UI.portrait ? 0.2 : 0.3)) : ch * 0.36) + (G.banner ? 62 : 0) - q.t * 10; }
+    else { const right = px + gap + w <= cw - 12 || px < cw / 2; cx = right ? px + gap + w / 2 : px - gap - w / 2; y = py - q.t * 14; }
+    const half = (w * s) / 2 + 2; cx = clamp(cx, 12 + half, cw - 12 - half);
+    return { cx, y, s };
+  }
+  function drawPop(q, px, py, gap) {
+    const o = popPlace(q, px, py, gap), k = q.t / 1.1;
+    ctx.globalAlpha = 1 - Math.max(0, k - 0.65) / 0.35;
+    ctx.save(); ctx.translate(o.cx, o.y); ctx.scale(o.s, o.s); ctx.textAlign = 'center';
+    ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(30,18,8,.85)'; ctx.strokeText(q.text, 0, 0); ctx.fillStyle = q.col; ctx.fillText(q.text, 0, 0); ctx.restore();
+    ctx.globalAlpha = 1;
+  }
 
   function updateParts(dt) {
     for (const p of G.parts) {
       p.life += dt; p.x += p.vx * dt; p.y += p.vy * dt;
       const drag = p.type === 'smoke' ? 1.5 : p.type === 'leaf' ? 2.2 : 3;
       p.vx *= Math.exp(-drag * dt); p.vy *= Math.exp(-drag * dt);
+      if (p.type === 'steam') { p.z += p.vz * dt; p.size += 9 * dt; continue; }
       p.vz -= 320 * dt; p.z = Math.max(0, p.z + p.vz * dt); if (p.z <= 0 && p.vz < 0) p.vz *= -0.25;
       p.rot += p.vr * dt;
       if (p.type === 'smoke') p.size += 14 * dt;
@@ -346,11 +429,15 @@
         else if (T.season === 'winter') col = surf === S.ROAD || surf === S.HEAVE || surf === S.BRIDGE ? 'rgba(120,110,100,.16)' : 'rgba(150,170,195,.35)';
         else if (surf === S.SHOULDER || surf === S.LEAVES) col = 'rgba(40,48,20,.24)';
         else col = c.drifting || sl > 55 ? 'rgba(45,28,16,.26)' : 'rgba(60,40,24,.14)';
-        if (d < 30) for (let w = 0; w < 2; w++) ART.decal(G.ground, wl[w][0], wl[w][1], rw[w][0], rw[w][1], c.drifting ? 4.2 : 3.6, col);
+        if (d < 30) for (let w = 0; w < 2; w++) { if (G.ground) ART.decal(G.ground, wl[w][0], wl[w][1], rw[w][0], rw[w][1], c.drifting ? 4.2 : 3.6, col); else if (V3on() && camDist(c.x, c.y) < 900) G.v3.skid(wl[w][0], wl[w][1], rw[w][0], rw[w][1], c.drifting ? 4.2 : 3.6, col); }
         G.wheels[i] = rw;
       }
     } else G.wheels[i] = rw;
     if (!near) return;
+    if (R.phase === 'countdown') { // revving on the grid: the rear wheels throw dust while DRIFT is held
+      if (c.revT > 0 && Math.random() < 0.6) { const w = rw[Math.random() < 0.5 ? 0 : 1]; part(w[0], w[1], T.season === 'winter' ? 'snow' : 'dust', -fx * (60 + Math.random() * 60) + (Math.random() - 0.5) * 40, -fy * (60 + Math.random() * 60) + (Math.random() - 0.5) * 40, { vz: 40 + Math.random() * 60, life: 0.5, size: 2.5 + Math.random() * 2 }); }
+      return;
+    }
     // spray / dust
     const rate = spd / 320;
     if (spd > 70 && c.airT <= 0) {
@@ -438,6 +525,7 @@
   function finishRaceFast() {
     const R = G.race; let n = 0;
     while (!R.done && n < 120 * 40) { R.step(); R.ev.length = 0; n++; }
+    for (const c of R.cars) { c.px = c.x; c.py = c.y; c.ph = c.h; } G.alpha = 1; // the results orbit sits on the final pose
     if (!R.done) { R.raceT += 0; }
   }
   function showResults() {
@@ -504,7 +592,8 @@
       const t = i === 0 ? fmt(c.finishT) : '+' + (c.finishT - leader).toFixed(2);
       rows.push(`<div class="row${c.isPlayer ? ' me' : ''}"><b>${i + 1}</b><span class="sw" style="background:${c.isPlayer && c.skin && DRD.PAINTS[save.paint] && DRD.PAINTS[save.paint].body ? DRD.PAINTS[save.paint].body : c.rig.body}"></span><span class="nm">${c.name}</span><span class="tm">${t}${c.estimated ? '<small> est.</small>' : ''}</span>${gpAward ? `<span class="pt">+${gpAward[c.name]}</span>` : ''}</div>`);
     });
-    { const cv = $('rsCar'), g = cv.getContext('2d'), sp = ART.ASSETS[p.skin] || ART.ASSETS['car' + p.rig.id]; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+    if (V3on()) { const cv = $('rsCar'); cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); cv.className = 'rscar' + (place === 1 && !isTT ? ' win' : ''); }
+    else { const cv = $('rsCar'), g = cv.getContext('2d'), sp = ART.ASSETS[p.skin] || ART.ASSETS['car' + p.rig.id]; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
       g.translate(cv.width / 2, cv.height / 2 + 4); g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(10, 14, 150, 52, 0, 0, TAU); g.fill();
       const k = 7.4; g.drawImage(sp.c || sp, -sp.ox / ART.CS * k, -sp.oy / ART.CS * k, (sp.c || sp).width / ART.CS * k, (sp.c || sp).height / ART.CS * k);
       cv.className = 'rscar' + (place === 1 && !isTT ? ' win' : ''); }
@@ -570,6 +659,11 @@
     A.applyMusic(false); A.applyMusic(true, 'title');
   }
   function launch(opts) {
+    if (G.use3D) {
+      const go = () => { if (!G.use3D) return launch(opts); startRace(opts); hideAll(); G.screen = 'race'; A.applyMusic(false); applyPRDrop(); };
+      if (V3on()) go(); else { $('loading').querySelector('.loadcard').textContent = 'Warming up the engine…'; show('loading'); const t0 = performance.now(); const wait = () => { if (V3on() || !G.use3D) go(); else if (performance.now() - t0 < 9000) setTimeout(wait, 50); else { fallbackTop(); go(); } }; wait(); }
+      return;
+    }
     show('loading');
     // let the loading card paint before the ground pre-render
     setTimeout(() => {
@@ -578,7 +672,7 @@
       A.applyMusic(false);
     }, 60);
   }
-  function pauseGame() { if (G.screen !== 'race') return; G.screen = 'paused'; ptrs.clear(); G.kb = { l: 0, r: 0, d: 0, drift: 0 }; A.engine(false, 0, 0, 0); show('pause'); syncToggles(); }
+  function pauseGame() { if (G.screen !== 'race') return; G.screen = 'paused'; applyPRDrop(); ptrs.clear(); G.kb = { l: 0, r: 0, d: 0, drift: 0 }; A.engine(false, 0, 0, 0); show('pause'); syncToggles(); }
   function resumeGame() { if (G.screen !== 'paused') return; hideAll(); G.screen = 'race'; A.unlock(); }
 
   function renderTitle() {
@@ -592,7 +686,9 @@
     const rigs = $('rigs'); rigs.innerHTML = '';
     DRD.RIGS.forEach((r) => {
       const b = document.createElement('button'); b.className = 'rig' + (save.rig === r.id ? ' sel' : ''); b.title = r.name; b.setAttribute('aria-label', r.name);
-      const cv = ART.ASSETS['car' + r.id]; if (cv) { const im = document.createElement('canvas'); im.width = 84; im.height = 48; const g = im.getContext('2d'); g.translate(42, 24); g.rotate(-Math.PI / 2 * 0); g.drawImage(cv.c, -cv.ox * 0.62, -cv.oy * 0.62, cv.c.width * 0.62, cv.c.height * 0.62); b.appendChild(im); }
+      const cv = ART.ASSETS['car' + r.id];
+      if (V3on()) { const im = document.createElement('canvas'); im.width = 168; im.height = 96; im.className = 'r3d'; b.appendChild(im); (G.rigShots || (G.rigShots = [])).push({ canvas: im, rig: r.id, paint: 0, angle: 0.75, dist: 96, camH: 40, fov: 24 }); }
+      else if (cv) { const im = document.createElement('canvas'); im.width = 84; im.height = 48; const g = im.getContext('2d'); g.translate(42, 24); g.drawImage(cv.c, -cv.ox * 0.62, -cv.oy * 0.62, cv.c.width * 0.62, cv.c.height * 0.62); b.appendChild(im); }
       b.onclick = () => { A.unlock(); A.click(); save.rig = r.id; persist(); renderTitle(); };
       rigs.appendChild(b);
     });
@@ -610,22 +706,21 @@
     });
     $('rigName').textContent = DRD.RIGS[save.rig].name + (DRD.RIGS[save.rig].type === 'pickup' ? ' · heavier, shoves harder' : ' · grippier in corners');
     $('raceCls').textContent = DRD.CLASSES[save.cls].name;
+    medalLine();
     $('garageSub').textContent = DRD.CLASSES[save.cls].name + ' · ' + DRD.RIGS[save.rig].name.split(' ')[0];
     syncToggles();
   }
   // title sub-panels: Modes (GP / pick track / time trial) and Garage (class, car, paint, toggles)
-  function showPanel(id) { ['panMain', 'panModes', 'panGarage'].forEach((p) => { $(p).hidden = p !== id; }); }
+  function showPanel(id) { ['panMain', 'panModes', 'panGarage'].forEach((p) => { $(p).hidden = p !== id; }); $('garageRig').hidden = !(id === 'panGarage' && V3on()); }
   function syncToggles() {
     ['togglesTitle', 'togglesPause'].forEach((id) => {
       const el = $(id); el.innerHTML = '';
-      [['sound', 'Sound'], ['music', 'Music'], ['steer', save.steer === 'tap' ? 'Steer: thumb' : 'Steer: drag'], ['buzz', 'Buzz']].forEach(([k, label]) => {
+      [['sound', 'Sound'], ['music', 'Music'], ['buzz', 'Buzz']].forEach(([k, label]) => {
         if (k === 'buzz' && !navigator.vibrate) return;
-        if (k === 'steer' && id === 'togglesTitle') return; // steering style lives in the pause menu only
-        const b = document.createElement('button'); b.className = 'tg' + ((k === 'steer' ? true : save[k]) ? ' on' : ''); b.textContent = label;
+        const b = document.createElement('button'); b.className = 'tg' + (save[k] ? ' on' : ''); b.textContent = label;
         b.onclick = () => {
           A.unlock();
-          if (k === 'steer') { save.steer = save.steer === 'tap' ? 'drag' : 'tap'; layoutButtons(); }
-          else save[k] = !save[k];
+          save[k] = !save[k];
           A.sound = save.sound; A.music = save.music; persist(); A.click(); A.applyMusic(G.screen === 'title' || G.screen === 'paused'); syncToggles();
         };
         el.appendChild(b);
@@ -717,6 +812,7 @@
   // ------------------------------------------------------------ camera
   function updateCamera(dt) {
     const R = G.race; if (!R) return;
+    if (G.use3D) { if (G.kick > 0) G.kick = Math.max(0, G.kick - dt * 2.2); G.shake = Math.max(0, G.shake - dt * 18); return; } // the 3D view moves its own camera
     const c = R.player && !G.demo ? R.player : R.order[0];
     const cam = G.cam;
     const spd = c.speed, k = 0.3;
@@ -762,6 +858,14 @@
   function render() {
     const R = G.race, T = G.T;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (G.use3D) { // the world is WebGL (#gl); this canvas only carries the HUD, buttons, pops and tags
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!R || !T || !V3on()) return;
+      G.ghostNow = ghostPos();
+      G.v3.render(G, G.frameDt || 1 / 60);
+      drawOverlay3D();
+      return;
+    }
     if (!R || !T) { ctx.fillStyle = '#2b2219'; ctx.fillRect(0, 0, canvas.width, canvas.height); return; }
     camTransform(ctx, 1);
     const vb = viewBox();
@@ -830,16 +934,7 @@
     // floating text
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // pop-up beside your car (left or right, whichever side has room), never on the road ahead of it
-    if (G.pops.length && R.player) {
-      const q = G.pops[0], [px, py] = worldToScreen(R.player.x, R.player.y);
-      const k = q.t / 1.1, s = 1 + 0.3 * Math.max(0, 1 - q.t * 7);
-      ctx.font = '18px "Alfa Slab One", serif'; const w = ctx.measureText(q.text).width;
-      const right = px + 34 + w <= cw - 8 || px < cw / 2;
-      const x = right ? Math.min(px + 34, cw - 10 - w) : Math.max(px - 34 - w, 10), y = py + 6 - q.t * 14;
-      ctx.globalAlpha = 1 - Math.max(0, k - 0.65) / 0.35;
-      ctx.save(); ctx.translate(x + (right ? 0 : w), y); ctx.scale(s, s); ctx.textAlign = right ? 'left' : 'right';
-      ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(30,18,8,.85)'; ctx.strokeText(q.text, 0, 0); ctx.fillStyle = q.col; ctx.fillText(q.text, 0, 0); ctx.restore();
-    }
+    if (G.pops.length && R.player) { const [px, py] = worldToScreen(R.player.x, R.player.y); drawPop(G.pops[0], px, py + 6, 34); }
     ctx.globalAlpha = 1;
     drawWeather();
     // boost speed lines
@@ -849,7 +944,146 @@
       for (let i = 0; i < 14; i++) { const x = Math.random() * cw, y = Math.random() * ch * 0.8, l = 40 + Math.random() * 80; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + l); ctx.stroke(); }
     }
     if (G.flash > 0) { ctx.fillStyle = G.flashCol + Math.min(0.7, G.flash) + ')'; ctx.fillRect(0, 0, cw, ch); }
+    if (G.hitV > 0) drawHitVignette();
     if (G.timeScale < 1) { const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * 0.3, cw / 2, ch / 2, Math.max(cw, ch) * 0.7); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.45)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, cw, ch); }
+  }
+
+  // ------------------------------------------------------------ 3D overlay (2D canvas over the WebGL world)
+  function proj(x, y, h) { return G.v3.project(x, y, h); }
+  function drawOverlay3D() {
+    const R = G.race, P = R.player;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    G.tagPts = [];
+    if (P && !G.demo && R.phase === 'race' && !P.finished && G.screen === 'race') {
+      // name tags: the two nearest rivals AHEAD within 400, fading with distance; a gold ▲ over the car one place ahead
+      const fx = Math.cos(P.h), fy = Math.sin(P.h), me = proj(P.x, P.y, 8);
+      const ahead = R.cars.filter((q) => q !== P && ((q.x - P.x) * fx + (q.y - P.y) * fy) > 10 && Math.hypot(q.x - P.x, q.y - P.y) < 400).sort((a, b) => Math.hypot(a.x - P.x, a.y - P.y) - Math.hypot(b.x - P.x, b.y - P.y)).slice(0, 2);
+      ctx.font = '800 12px Barlow, sans-serif'; ctx.textAlign = 'center';
+      for (const c of ahead) {
+        const d = Math.hypot(c.x - P.x, c.y - P.y), q = proj(c.x, c.y, 24);
+        if (!q.visible || q.sy > ch * 0.8) continue;
+        if (Math.abs(q.sx - me.sx) < 60 && Math.abs(q.sy - me.sy) < 46) continue; // never over your own rig
+        ctx.globalAlpha = clamp((400 - d) / 120, 0, 1) * 0.92;
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,12,6,.75)'; ctx.strokeText(c.name, q.sx, q.sy); ctx.fillStyle = c.rig.roof || '#fff'; ctx.fillText(c.name, q.sx, q.sy); G.tagPts.push([q.sx, q.sy]);
+        if (c.place === P.place - 1) { ctx.fillStyle = '#ffd34d'; ctx.fillText('▲', q.sx, q.sy - 12); }
+      }
+      ctx.globalAlpha = 1;
+      // slipstream building: four thin streaks converge on the car you are tucked in behind
+      if (P.draftT > 0.05 && P.draftT < 0.45) {
+        let tgt = null; for (const q of R.cars) { if (q === P) continue; const dx = q.x - P.x, dy = q.y - P.y, al = dx * fx + dy * fy; if (al > 26 && al < 110 && Math.abs(dx * -fy + dy * fx) < 18) { tgt = q; break; } }
+        if (tgt) { const q = proj(tgt.x, tgt.y, 8), k = P.draftT / 0.45; ctx.strokeStyle = 'rgba(220,240,255,' + (0.35 * (1 - k * 0.5)).toFixed(3) + ')'; ctx.lineWidth = 1.5;
+          for (let i = 0; i < 4; i++) { const a = -0.9 + i * 0.6 + (i > 1 ? 0.6 : 0), r0 = 150 - k * 60, r1 = 40; ctx.beginPath(); ctx.moveTo(q.sx + Math.cos(a + Math.PI / 2) * r0 * (i % 2 ? 1 : -1), q.sy + Math.sin(a) * r0 * 0.4 + 30); ctx.lineTo(q.sx + Math.cos(a + Math.PI / 2) * r1 * (i % 2 ? 1 : -1), q.sy + Math.sin(a) * r1 * 0.4 + 10); ctx.stroke(); } }
+      }
+    }
+    // time trial: a small BEST tag over the ghost
+    if (G.ghostNow && P && G.screen === 'race') { const q = proj(G.ghostNow.x, G.ghostNow.y, 24), me = proj(P.x, P.y, 8);
+      if (q.visible && !(Math.abs(q.sx - me.sx) < 50 && Math.abs(q.sy - me.sy) < 40)) { ctx.font = '800 11px Barlow, sans-serif'; ctx.textAlign = 'center'; ctx.globalAlpha = 0.85; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,30,50,.7)'; ctx.strokeText('BEST', q.sx, q.sy); ctx.fillStyle = '#cfe9ff'; ctx.fillText('BEST', q.sx, q.sy); ctx.globalAlpha = 1; } }
+    // pop-up beside your rig (left or right, whichever has room), one at a time
+    if (G.pops.length && P && !G.demo) { const me = proj(P.x, P.y, 10); drawPop(G.pops[0], me.sx, me.sy - 4, 64); }
+    // above 90% of top speed: thin streaks flying out from the vanishing point along the screen edges (never over the road
+    // ahead or your rig); stronger on a boost
+    if (P && !G.demo && R.phase === 'race' && !P.finished && V3on()) {
+      const k = clamp((P.speed / R.cls.vmax - 0.9) / 0.1, 0, 1), kb = G.speedT > 0 && P.boostT > 0 ? (P.boostDur >= 0.85 ? 1 : 0.75) * clamp(P.boostT / 0.3, 0, 1) : 0, amt = Math.max(k * 0.7, kb);
+      if (amt > 0.02) {
+        const vp = G.v3.project(G.cam.x + Math.cos(G.cam.a) * 6000, G.cam.y + Math.sin(G.cam.a) * 6000, 0), ox = vp.sx, oy = vp.sy, R0 = Math.hypot(cw, ch);
+        if (!G.streaks) { G.streaks = []; for (let i = 0; i < 14; i++) G.streaks.push({ a: 0, r: 0, v: 0 }); }
+        ctx.lineWidth = kb > 0 ? 2.4 : 1.6; ctx.lineCap = 'round';
+        const nSt = kb > 0 ? 14 : 9; // a boost: more, thicker, brighter streaks (they show in a still)
+        for (let si = 0; si < nSt; si++) { const st = G.streaks[si];
+          st.r += st.v * (G.frameDt || 0.016);
+          if (st.r > st.e || st.v === 0) { // respawn part-way to the screen edge, so each streak stays in view ~0.3 s
+            const side = Math.random() < 0.5 ? -1 : 1; st.a = Math.PI / 2 + side * (0.95 + Math.random() * 0.5) + (Math.random() < 0.3 ? side * 0.9 : 0);
+            const c0 = Math.cos(st.a), s0 = Math.sin(st.a), tx = c0 > 0.01 ? (cw - ox) / c0 : c0 < -0.01 ? -ox / c0 : 1e4, ty = s0 > 0.01 ? (ch - oy) / s0 : s0 < -0.01 ? -oy / s0 : 1e4;
+            st.e = Math.max(60, Math.min(tx, ty)); st.r = st.e * (0.3 + Math.random() * 0.35); st.v = st.e * (1.5 + Math.random() * 0.9);
+          }
+          const ca = Math.cos(st.a), sa = Math.sin(st.a), l = st.e * 0.2 * (0.6 + amt) * (kb > 0 ? 1.4 : 1);
+          ctx.strokeStyle = kb > 0 ? 'rgba(255,246,220,' + (0.5 * amt).toFixed(3) + ')' : 'rgba(255,255,255,' + (0.26 * amt).toFixed(3) + ')';
+          ctx.beginPath(); ctx.moveTo(ox + ca * st.r, oy + sa * st.r); ctx.lineTo(ox + ca * (st.r + l), oy + sa * (st.r + l)); ctx.stroke();
+        }
+      }
+    }
+    // the old boost lines stay for the top-down fallback only
+    if (P && !G.demo && G.speedT > 0 && P.boostT > 0 && !V3on()) {
+      ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 2;
+      for (let i = 0; i < 5; i++) { const left = i % 2 === 0, x = left ? 8 + Math.random() * cw * 0.14 : cw - 8 - Math.random() * cw * 0.14, y = ch * (0.3 + Math.random() * 0.4), l = 50 + Math.random() * 70; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (left ? -1 : 1) * l * 0.25, y + l); ctx.stroke(); }
+    }
+    if (G.flash > 0) { ctx.fillStyle = G.flashCol + Math.min(0.7, G.flash) + ')'; ctx.fillRect(0, 0, cw, ch); }
+    if (G.hitV > 0) drawHitVignette();
+  }
+  // a hit reddens only the screen edges (the sky and the road ahead stay readable)
+  let hitVG = null, hitVGk = '';
+  function drawHitVignette() {
+    const key = cw + 'x' + ch, sw = Math.round(Math.min(cw, ch) * 0.16);
+    if (hitVGk !== key) {
+      const mk = (x0, y0, x1, y1) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(210,26,14,.62)'); g.addColorStop(0.45, 'rgba(225,36,20,.22)'); g.addColorStop(1, 'rgba(230,40,24,0)'); return g; };
+      hitVG = { l: mk(0, 0, sw, 0), r: mk(cw, 0, cw - sw, 0), t: mk(0, 0, 0, sw), b: mk(0, ch, 0, ch - sw) }; hitVGk = key;
+    }
+    ctx.globalAlpha = Math.min(1, G.hitV / 0.3);
+    ctx.fillStyle = hitVG.l; ctx.fillRect(0, 0, sw, ch); ctx.fillStyle = hitVG.r; ctx.fillRect(cw - sw, 0, sw, ch);
+    ctx.fillStyle = hitVG.t; ctx.fillRect(0, 0, cw, sw); ctx.fillStyle = hitVG.b; ctx.fillRect(0, ch - sw, cw, sw);
+    ctx.globalAlpha = 1;
+  }
+  // incoming item from behind (you can't see behind you in chase view) + a rival about to pass
+  function updateWarnings(dt) {
+    const R = G.race, P = R && R.player; G.incoming = null;
+    if (G.passArrow) { G.passArrow.t -= dt; if (G.passArrow.t <= 0) G.passArrow = null; }
+    if (G.speedT > 0) G.speedT -= dt;
+    if (!P || G.demo || P.finished || R.phase !== 'race') return;
+    const fx = Math.cos(P.h), fy = Math.sin(P.h);
+    let best = null;
+    for (const p of R.proj) {
+      if (p.dead || p.owner === P.i) continue;
+      const dx = P.x - p.x, dy = P.y - p.y, d = Math.hypot(dx, dy) || 1;
+      if (dx * fx + dy * fy <= 0) continue; // only from behind
+      const close = ((p.vx - P.vx) * dx + (p.vy - P.vy) * dy) / d;
+      if (close <= 20) continue;
+      const tti = Math.max(0, d - 24) / close; if (tti > 1.2) continue;
+      const lat = (p.x - P.x) * -fy + (p.y - P.y) * fx;
+      if (!best || tti < best.t) best = { t: tti, side: lat < -14 ? -1 : lat > 14 ? 1 : 0, type: p.type };
+    }
+    // no projectile yet: a rival close behind with a pinecone aimed at you, or a snowball and you in range, shows the same
+    // diamond as an outline 1.2 s ahead of the throw's likely arrival (the AI's own throw rules), so a hit is never a surprise
+    if (!best) for (const q of R.cars) {
+      if (q === P || q.finished || !q.item || q.roulette > 0 || q.spinT > 0 || (q.item !== 'pine' && q.item !== 'snow')) continue;
+      const dx = P.x - q.x, dy = P.y - q.y, d = Math.hypot(dx, dy) || 1;
+      if (dx * fx + dy * fy <= 0) continue; // it must be behind you
+      let est = 9;
+      if (q.item === 'pine') { const qa = (dx * Math.cos(q.h) + dy * Math.sin(q.h)) / d; if (d < 430 && d > 40 && qa > 0.95) est = Math.max(0, d - 24) / 430 + 0.25; }
+      else { const ahead = P.dist - q.dist; if (ahead > 60 && ahead < 330) est = ahead / 260 + 0.25; }
+      if (est > 1.45) continue;
+      const lat = (q.x - P.x) * -fy + (q.y - P.y) * fx;
+      if (!best || est < best.t) best = { t: Math.min(1.2, est), side: lat < -14 ? -1 : lat > 14 ? 1 : 0, type: q.item, armed: true };
+    }
+    if (best && P.invT > best.t + 0.15) best = null; // it will bounce off you anyway
+    G.incoming = best;
+    if (best && !best.armed) { G.incBeepT = (G.incBeepT || 0) - dt; if (G.incBeepT <= 0) { G.incBeepT = 0.12 + 0.3 * best.t / 1.2; A.incoming(1 - best.t / 1.2); } } else G.incBeepT = 0;
+    for (const q of R.cars) {
+      if (q === P) continue;
+      const dx = q.x - P.x, dy = q.y - P.y, al = dx * fx + dy * fy, lat = dx * -fy + dy * fx;
+      if (R.raceT > 3 && al < 0 && al > -40 - 30 && Math.abs(lat) < 50 && q.speed > P.speed + 12) { if (!G.passArrow) G.passArrow = { side: lat < 0 ? -1 : 1, t: 0.6 }; else G.passArrow.t = Math.max(G.passArrow.t, 0.3); }
+    }
+  }
+  function drawWarnings() {
+    const it = UI.btn.item; if (!it) return;
+    const now = performance.now() / 1000;
+    if (G.incoming) {
+      const inc = G.incoming, k = 1 - inc.t / 1.2, pulse = inc.armed ? 0.5 + 0.5 * Math.sin(now * 6) : 0.5 + 0.5 * Math.sin(now * (8 + k * 22));
+      const x = cw / 2 + inc.side * Math.min(110, cw * 0.28), y = UI.portrait ? it.y - it.r - 54 : ch - ins.b - 78, s = (inc.armed ? 27 : 30) + 4 * pulse;
+      ctx.save(); ctx.translate(x, y); ctx.globalAlpha = inc.armed ? 0.7 + 0.2 * pulse : 0.8 + 0.2 * pulse;
+      ctx.rotate(Math.PI / 4); ctx.fillStyle = '#1c1a17'; ctx.fillRect(-s, -s, s * 2, s * 2);
+      if (inc.armed) { ctx.fillStyle = 'rgba(28,26,23,.55)'; ctx.fillRect(-s + 4, -s + 4, s * 2 - 8, s * 2 - 8); ctx.strokeStyle = '#ffc928'; ctx.lineWidth = 4; ctx.strokeRect(-s + 5, -s + 5, s * 2 - 10, s * 2 - 10); }
+      else { ctx.fillStyle = '#ffc928'; ctx.fillRect(-s + 3, -s + 3, s * 2 - 6, s * 2 - 6); }
+      ctx.rotate(-Math.PI / 4);
+      const ic = ART.ASSETS['icon_' + inc.type]; if (ic) ctx.drawImage(ic, -22, -22, 44, 44);
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+    if (G.passArrow) {
+      const b = G.passArrow.side < 0 ? UI.btn.driftL : UI.btn.driftR; if (!b) return;
+      const x = b.x + (G.passArrow.side < 0 ? 1 : -1) * (b.r + 18), y = b.y + 4, a = Math.min(1, G.passArrow.t * 4);
+      ctx.save(); ctx.globalAlpha = a * 0.9; ctx.translate(x, y); ctx.fillStyle = '#f4e8cc'; ctx.strokeStyle = 'rgba(30,18,8,.8)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(12, 4); ctx.lineTo(4, 4); ctx.lineTo(4, 14); ctx.lineTo(-4, 14); ctx.lineTo(-4, 4); ctx.lineTo(-12, 4); ctx.closePath(); ctx.stroke(); ctx.fill();
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
   }
 
   function drawCar(c, ct) {
@@ -1023,7 +1257,7 @@
   // ------------------------------------------------------------ weather (screen space)
   function initWeather() {
     G.weather = [];
-    const s = G.T.season, n = s === 'winter' ? 24 : 0; // weather stays a hint, never a curtain over the road
+    const s = G.T.season, n = s === 'winter' && !G.use3D ? 24 : 0; // weather stays a hint, never a curtain over the road (3D: snow is in the scene)
     for (let i = 0; i < n; i++) G.weather.push({ x: Math.random(), y: Math.random(), z: 0.4 + Math.random() * 0.8, p: Math.random() * TAU });
   }
   function drawWeather() {
@@ -1055,11 +1289,12 @@
     // position
     if (G.mode !== 'tt') {
       const pp = G.placePop > 0 ? 1 + G.placePop * 0.6 : 1;
-      ctx.save(); ctx.translate(L + 18, top + 34); ctx.scale(pp, pp);
-      hudText(String(P.place), 0, 0, 44, P.place === 1 ? '#ffd34d' : '#fff', 'center');
+      const big = G.use3D ? 56 : 44, bx = G.use3D ? 22 : 18, by = G.use3D ? 44 : 34;
+      ctx.save(); ctx.translate(L + bx, top + by); ctx.scale(pp, pp);
+      hudText(String(P.place), 0, 0, big, P.place === 1 ? '#ffd34d' : '#fff', 'center');
       ctx.restore();
-      hudText(ordinal(P.place).slice(-2), L + 38 + (P.place >= 10 ? 10 : 0), top + 14, 16, '#f4e8cc');
-      hudText('/' + R.cars.length, L + 38, top + 34, 14, '#d6c6b0', 'left', '800 14px Barlow, sans-serif', 3);
+      hudText(ordinal(P.place).slice(-2), L + bx * 2 + 4 + (P.place >= 10 ? 10 : 0), top + (G.use3D ? 18 : 14), 16, '#f4e8cc');
+      hudText('/' + R.cars.length, L + bx * 2 + 4, top + by, 14, '#d6c6b0', 'left', '800 14px Barlow, sans-serif', 3);
     } else {
       hudText('TIME TRIAL', L, top + 18, 15, '#ffd34d');
       if (G.ghost) hudText('ghost ' + fmt(G.ghost.lap), L, top + 36, 14, '#cfe6ff', 'left', '800 14px Barlow, sans-serif', 3);
@@ -1077,7 +1312,7 @@
     }
     // minimap
     if (UI.mm) {
-      const m = UI.mm, mx = L - 4, my = top + 48;
+      const m = UI.mm, mx = L - 4, my = top + (G.use3D ? 58 : 48);
       ctx.drawImage(m.c, mx, my, m.size, m.size);
       for (const c of R.cars) {
         if (c === P) continue;
@@ -1090,7 +1325,7 @@
     }
     // touch controls
     if (G.touchUI && !P.finished) drawButtons();
-    else if (!G.touchUI && R.raceT < 9 && !P.finished) {
+    else if (!G.touchUI && R.raceT < 9 && !P.finished && (!G.use3D || (save.races || 0) < 1)) {
       ctx.globalAlpha = R.phase === 'countdown' ? 1 : clamp(1 - (R.raceT - 6) / 3, 0, 1);
       hudText('← → steer   ·   SHIFT drift (hold in corners)   ·   SPACE item   ·   ↓ brake', cw / 2, ch - ins.b - 20, 15, '#f4e8cc', 'center', '800 15px Barlow, sans-serif', 3);
       ctx.globalAlpha = 1;
@@ -1099,7 +1334,7 @@
     if (!save.hints.drift && R.phase === 'race' && !P.finished && !P.drifting && P.speed > 200) {
       const T = G.T, k0 = T.idx(P.s); let mk = 0, side = 0; for (let j = 4; j < 30; j += 2) { const kk = T.LK[(k0 + j) % T.N]; if (Math.abs(kk) > mk) { mk = Math.abs(kk); side = Math.sign(kk); } }
       // teach the one-thumb drift (the DRIFT button on the turn side alone picks the direction): it is the easiest one to land
-      if (mk * P.speed > 2.0) G.prompt = { text: G.touchUI ? (save.steer === 'tap' ? "Hold the DRIFT on the side you're turning" : 'Hold DRIFT + steer!') : 'Hold SHIFT + steer to drift!', t: 0, dur: 1.6, btn: 'drift', side: G.touchUI && save.steer === 'tap' ? side : 0 };
+      if (mk * P.speed > 2.0) G.prompt = { text: G.touchUI ? "Hold the DRIFT on the side you're turning" : 'Hold SHIFT + steer to drift!', t: 0, dur: 1.6, btn: 'drift', side: G.touchUI ? side : 0 };
     }
     // wrong way: heading well against the road for a moment -> big sign + which way to turn
     if (R.phase === 'race' && !P.finished && P.k >= 0 && P.k < G.T.N && P.spinT <= 0) {
@@ -1119,7 +1354,7 @@
       ctx.restore(); ctx.globalAlpha = 1;
     }
     // stuck against something: say how to get out (a tow comes at 5.5 s anyway)
-    if (R.phase === 'race' && !P.finished && P.progT > 1.5 && P.speed < 70 && P.spinT <= 0 && !(G.prompt && G.prompt.btn === 'brake')) G.prompt = { text: !G.touchUI ? 'Stuck? Hold ↓ to back out' : save.steer === 'tap' ? 'Stuck? Hold both sides to back up' : 'Stuck? Hold BRAKE to back out', t: 0, dur: 2.2, btn: 'brake' };
+    if (R.phase === 'race' && !P.finished && P.progT > 1.5 && P.speed < 70 && P.spinT <= 0 && !(G.prompt && G.prompt.btn === 'brake')) G.prompt = { text: !G.touchUI ? 'Stuck? Hold ↓ to back out' : 'Stuck? Hold both sides to back up', t: 0, dur: 2.2, btn: 'brake' };
     if (G.prompt && G.wrongT > 0.7) G.prompt.t = Math.min(G.prompt.t, 0.01); // hold other prompts while WRONG WAY shows
     if (G.prompt && !(G.wrongT > 0.7)) {
       if (G.prompt.t > G.prompt.dur) G.prompt = null;
@@ -1131,7 +1366,7 @@
       if (b.t > b.dur) G.banner = null;
       else {
         const k = b.t / b.dur, s = (b.big ? 1.6 : 1) * (1 + 0.5 * Math.max(0, 1 - b.t * 5)), a = 1 - Math.max(0, k - 0.75) / 0.25;
-        ctx.globalAlpha = a; ctx.save(); ctx.translate(cw / 2, ch * 0.36); ctx.scale(s, s);
+        ctx.globalAlpha = a; ctx.save(); ctx.translate(cw / 2, G.use3D ? Math.max(ins.t + 150, ch * (UI.portrait ? 0.2 : 0.3)) : ch * 0.36); ctx.scale(s, s);
         hudText(b.text, 0, 0, 40, b.col || '#fff', 'center');
         if (b.sub) hudText(b.sub, 0, 24, 15, '#f4e8cc', 'center', '800 15px Barlow, sans-serif', 3);
         if (b.sub2) hudText(b.sub2, 0, 46, 16, '#ffd34d', 'center');
@@ -1142,18 +1377,20 @@
     if (R.phase === 'countdown' && G.introT <= 0 && races >= 2 && races <= 3 && (save.hints.rocket || 0) < 2 && G.mode !== 'daily') {
       ctx.globalAlpha = clamp((2.1 - R.countdown) * 3, 0, 1); coachLine(G.touchUI ? 'Hold DRIFT as the 1 shows = rocket start' : 'Hold SHIFT as the 1 shows = rocket start', '#ffd34d', 14); ctx.globalAlpha = 1;
       if (!G.prompt || G.prompt.btn !== 'drift') G.prompt = { text: '', t: 0, dur: 0.4, btn: 'drift' };
-    } else if (G.touchUI && save.steer === 'tap' && races < 2 && !P.finished && R.raceT < 12 && G.introT <= 0 && !(G.prompt && G.prompt.text)) {
+    } else if (G.touchUI && races < 2 && !P.finished && R.raceT < 12 && G.introT <= 0 && !(G.prompt && G.prompt.text)) {
       // first two races: teach the thumb steering with one line + a live steering bar
       ctx.globalAlpha = R.phase === 'countdown' ? 1 : clamp(1 - (R.raceT - 9) / 3, 0, 1);
       coachLine('slide your thumb: edge = hard turn, middle = gentle', '#f4e8cc', 14);
       ctx.globalAlpha = 1;
     }
-    if (G.introT > 0 && R.phase === 'countdown') {
-      ctx.globalAlpha = clamp(G.introT, 0, 1);
-      hudText(G.T.name, cw / 2, ch * 0.3, 30, '#fff', 'center');
-      hudText(G.mode === 'gp' ? 'Grand Prix · race ' + (G.gp.round + 1) + ' of 4' : G.mode === 'tt' ? 'Time trial · beat the ghost' : G.mode === 'daily' ? 'Daily Derby · ' + dailyInfo().twist.name : R.cls.name + ' · 3 laps', cw / 2, ch * 0.3 + 26, 16, '#f4e8cc', 'center', '800 16px Barlow, sans-serif', 3);
+    if ((G.introT > 0 || (G.use3D && R.countdown > DRD.CD_STEP * 2.2)) && R.phase === 'countdown') {
+      ctx.globalAlpha = G.use3D ? 1 : clamp(G.introT, 0, 1);
+      const ty = G.use3D ? Math.max(ins.t + 96, ch * (UI.portrait ? 0.12 : 0.2)) : ch * 0.3;
+      hudText(G.T.name, cw / 2, ty, 30, '#fff', 'center');
+      hudText(G.mode === 'gp' ? 'Grand Prix · race ' + (G.gp.round + 1) + ' of 4' : G.mode === 'tt' ? 'Time trial · beat the ghost' : G.mode === 'daily' ? 'Daily Derby · ' + dailyInfo().twist.name : R.cls.name + ' · 3 laps', cw / 2, ty + 26, 16, '#f4e8cc', 'center', '800 16px Barlow, sans-serif', 3);
       ctx.globalAlpha = 1;
     }
+    if (G.use3D && G.touchUI && !P.finished) drawWarnings();
   }
   // one place for teaching text: a single line just above the bottom controls, off the road ahead
   function coachY() {
@@ -1164,23 +1401,13 @@
     if (G.tagPts && G.tagPts.some((q) => Math.abs(q[0] - cw / 2) < 170 && q[1] > y - 16 && q[1] < y + 12)) G.coachLiftAt = now;
     return now - (G.coachLiftAt || -1e9) < 400 ? y - 18 : y;
   }
-  function coachLine(text, col, size) { size = size || 15; hudText(text, cw / 2, coachY(), size, col || '#f4e8cc', 'center', '800 ' + size + 'px Barlow, sans-serif', 3.5); }
+  function coachLine(text, col, size) { size = size || 15; if (G.incoming) return; hudText(text, cw / 2, coachY(), size, col || '#f4e8cc', 'center', '800 ' + size + 'px Barlow, sans-serif', 3.5); }
   function drawButtons() {
     const R = G.race, P = R.player, tap = save.steer === 'tap', snow = G.T && G.T.season === 'winter';
     const held = { drift: false, brake: false, item: false };
     for (const q of ptrs.values()) if (q.role in held) held[q.role] = true;
     if (G.kb.drift) held.drift = true;
-    // steering finger feedback: a soft edge glow that grows with how hard you are turning
-    for (const q of ptrs.values()) {
-      if (q.role !== 'steer') continue;
-      if (!tap) {
-        ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(q.x0 - 46, q.y); ctx.lineTo(q.x0 + 46, q.y); ctx.stroke();
-        ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.arc(q.x, q.y, 18, 0, TAU); ctx.fill();
-      } else {
-        const left = q.x < cw / 2, amt = Math.abs(thumbSteer(q.x)), gr = ctx.createLinearGradient(left ? 0 : cw, 0, left ? 60 : cw - 60, 0);
-        gr.addColorStop(0, 'rgba(255,211,77,' + (0.06 + 0.24 * amt).toFixed(3) + ')'); gr.addColorStop(1, 'rgba(255,211,77,0)'); ctx.fillStyle = gr; ctx.fillRect(left ? 0 : cw - 60, 0, 60, ch);
-      }
-    }
+    // (no steering edge glow: the steering bar and the rig's turning front wheels already show your input)
     // first two races: a live steering bar just above ITEM (dot = how hard the car is turning)
     const it = UI.btn.item;
     if (tap && it && (save.races || 0) < 2 && R.raceT < 12) {
@@ -1227,6 +1454,8 @@
         if (ik) ctx.drawImage(ART.ASSETS['icon_' + ik], -b.r * 0.55, -b.r * 0.58, b.r * 1.1, b.r * 1.1);
         ctx.globalAlpha = 1;
         if (P.item && P.roulette <= 0 && P.itemN > 1) hudText('×' + P.itemN, b.r * 0.62, b.r * 0.62, 15, '#ffd34d', 'center', '"Alfa Slab One", serif', 3);
+        // syrup or hay just went out the back (it lands behind the camera, so the button says so): the icon drops out of the slot
+        if (G.dropPop && G.dropPop.t < 0.4) { const k = G.dropPop.t / 0.4, e2 = k * k; ctx.globalAlpha = 1 - e2; ctx.drawImage(ART.ASSETS['icon_' + G.dropPop.item], -b.r * 0.5, -b.r * 0.55 + e2 * b.r * 0.9, b.r, b.r); ctx.globalAlpha = Math.min(1, (0.4 - G.dropPop.t) * 6); hudText('DROPPED', 0, -b.r - 8 - k * 6, 12, '#ffe7a8', 'center', '800 12px Barlow, sans-serif', 3); ctx.globalAlpha = 1; }
       } else if (b.role === 'drift') { if ((save.races || 0) < 3) hudText(b.label, 0, 6, 15, '#f4e8cc', 'center', '"Alfa Slab One", serif', 3); }
       else hudText(b.label, 0, 4, 11, '#f4e8cc', 'center', '800 11px Barlow, sans-serif', 3);
       ctx.globalAlpha = 1;
@@ -1269,8 +1498,15 @@
     let dt = (now - last) / 1000; last = now;
     if (dt > 0.1) dt = 0.1; if (dt < 0) dt = 0;
     G.frameMs = G.frameMs * 0.95 + dt * 1000 * 0.05;
+    G.frameDt = dt;
+    watchPerf(dt);
     tick(dt);
-    if (G.screen === 'podium') { drawPodium(dt); return; }
+    rigShots(now / 1000);
+    if (G.screen === 'podium') {
+      if (V3on()) { G.podium.t += dt; render(); drawConfetti(G.podium.conf, dt); }
+      else drawPodium(dt);
+      return;
+    }
     render();
     if (G.screen === 'race' || G.screen === 'paused') drawHUD(G.screen === 'race' ? dt : 0);
     if (G.screen === 'results' && G.confetti) drawConfetti(G.confetti, dt);
@@ -1285,6 +1521,8 @@
   }
   function updateTimers(dt) {
     if (G.flash > 0) G.flash -= dt * 1.6;
+    if (G.hitV > 0) G.hitV -= dt;
+    if (G.dropPop) { G.dropPop.t += dt; if (G.dropPop.t > 0.4) G.dropPop = null; }
     if (G.itemShake > 0) G.itemShake -= dt; if (G.itemPop > 0) G.itemPop -= dt * 2; if (G.placePop > 0) G.placePop -= dt * 2;
     if (G.itemName) G.itemName.t += dt; if (G.lapDelta) G.lapDelta.t += dt;
     if (G.banner) G.banner.t += dt;
@@ -1292,7 +1530,7 @@
   }
   function tick(dt) {
     const R = G.race;
-    if (!R) return;
+    if (!R || G.hold) return; // __T.hold(): tests freeze the race while frames keep drawing
     const live = G.screen === 'race' || G.screen === 'title';
     if (!live) { A.engine(false, 0, 0, 0); return; }
     if (G.screen === 'race') readControls();
@@ -1303,15 +1541,18 @@
     G.acc += dt * G.timeScale;
     let n = 0;
     while (G.acc >= DT && n < 24) {
+      for (const c of R.cars) { c.px = c.x; c.py = c.y; c.ph = c.h; }
       R.step(); G.acc -= DT; n++;
       checkPhoto(); handleEvents();
       if (G.screen === 'race') recordGhost();
     }
     if (n >= 24) G.acc = 0;
+    G.alpha = clamp(G.acc / DT, 0, 1);
     R.cars.forEach((c, i) => carFx(c, i, dt * G.timeScale));
     updateParts(dt * G.timeScale);
     updateCamera(dt);
     updateTimers(dt);
+    if (G.use3D && G.screen === 'race') updateWarnings(dt);
     // engine sound
     if (G.screen === 'race' && P) {
       const sp = (R.phase === 'countdown' ? 0.15 + (P.inp.drift ? 0.25 : 0) : P.speed / R.cls.vmax);
@@ -1326,6 +1567,52 @@
     if (G.demo && (R.done || R.raceT > 70)) startRace({ demo: true, track: (G.trackI + 1) % 4, cls: 1 });
   }
 
+  // ------------------------------------------------------------ 3D helpers: rig snapshots, frame-time watch, fallback, boot
+  // the results card and the Garage show a turning 3D rig (rendered by the 3D view into their 2D canvases)
+  function rigShots(t) {
+    G.rigShot = null;
+    if (!V3on()) return;
+    G.rigFrame = (G.rigFrame || 0) + 1; if (G.rigFrame % 2) return; // 30 Hz is plenty for a turning preview (each one is a GPU readback)
+    if (G.screen === 'results' && G.race && G.race.player && !$('results').hidden) { const p = G.race.player; G.rigShot = { canvas: $('rsCar'), rig: p.rig.id, paint: p.paintI || 0, angle: 0.7 + Math.sin(t * 0.7) * 0.5, dist: 100, camH: 34, fov: 22 }; }
+    else if (G.screen === 'title' && !$('panGarage').hidden) { $('garageRig').hidden = false; G.rigShot = { canvas: $('garageRig'), rig: save.rig, paint: paintOk(save.paint) ? save.paint : 0, angle: t * 0.6, dist: 100, camH: 34, fov: 22 }; }
+  }
+  // if the average frame time stays above 19 ms, the next race (or the pause menu) drops the 3D pixel ratio a step
+  function watchPerf(dt) {
+    if (!V3on() || G.screen !== 'race' || !G.race || G.race.phase !== 'race' || document.hidden) { G.pw = null; return; }
+    const w = G.pw || (G.pw = { t: 0, n: 0 }); w.t += dt; w.n++;
+    if (w.t >= 2) { if (w.t / w.n * 1000 > 19) G.prDrop = 1; G.pw = null; }
+  }
+  function applyPRDrop() {
+    if (!G.prDrop || !V3on()) return;
+    G.prDrop = 0;
+    const cur = G.v3.view(G).pixelRatio;
+    if (cur <= 1) return;
+    save.prMax = cur > 1.25 ? 1.25 : 1; persist(); G.v3.resize(cw, ch, save.prMax);
+  }
+  function fallbackTop() { // WebGL died or the 3D module never arrived: the old top-down renderer takes over
+    if (!G.use3D) return;
+    G.use3D = false; glCanvas.style.display = 'none';
+    if (G.T) G.ground = ART.buildGround(G.T);
+    if (G.T && G.race) { const f = G.race.player || G.race.cars[0], p0 = G.T.point(f.s + 120); G.cam.x = p0.x; G.cam.y = p0.y; G.cam.a = f.h; G.cam.z = UI.z0; }
+    initWeather();
+  }
+  DRD.onView3D = function (V) {
+    if (!G.use3D) return;
+    G.v3 = V; V.resize(cw, ch, save.prMax || 0);
+    requestAnimationFrame(() => glCanvas.classList.remove('off'));
+    renderTitle();
+  };
+  DRD.onView3DFail = function () { fallbackTop(); };
+  DRD.onContextLost = function () { if (G.screen === 'race') pauseGame(); };
+  DRD.onContextRestored = function () { if (G.v3) G.v3.resize(cw, ch, save.prMax || 0); };
+  if (G.use3D) setTimeout(() => { if (!G.v3) fallbackTop(); }, 9000);
+  function medalLine() {
+    let g = 0, sv = 0, b = 0;
+    for (const k in save.best) { const m = save.best[k] && save.best[k].medal; if (m === 0) g++; else if (m === 1) sv++; else if (m === 2) b++; }
+    const el = $('medalCount'); if (!el) return;
+    el.hidden = !(g + sv + b); el.textContent = '🥇 ' + g + ' · 🥈 ' + sv + ' · 🥉 ' + b + '  of 24';
+  }
+
   // ------------------------------------------------------------ boot
   layout();
   bind();
@@ -1338,7 +1625,7 @@
   window.__T = {
     noPause: false,
     start(o) { o = o || {}; if (o.steer) save.steer = o.steer; if (o.rig != null) save.rig = o.rig; if (o.cls != null) save.cls = o.cls; G.mode = o.mode || 'single'; if (G.mode === 'gp') G.gp = { round: o.round || 0, pts: {}, rig: {}, cls: save.cls, nameSeed: 5 }; startRace({ mode: G.mode, track: o.track || 0, cls: o.cls, seed: o.seed }); hideAll(); G.screen = 'race'; if (o.skipIntro !== false) G.introT = 0; if (o.skipCountdown) { G.race.countdown = 0.001; } layoutButtons(); return this.state(); },
-    step(ms) { const n = Math.round((ms || 16) / (DT * 1000)); for (let i = 0; i < n; i++) { if (G.screen === 'race') readControls(); G.race.step(); checkPhoto(); handleEvents(); recordGhost(); G.race.cars.forEach((c, j) => carFx(c, j, DT)); if (i % 2 === 0) { updateParts(DT * 2); updateCamera(DT * 2); updateTimers(DT * 2); } if (G.screen === 'race' && G.race.player && G.race.player.finished && G.finishShownT > 0) { G.finishShownT -= DT; if (G.finishShownT <= 0) { showResults(); break; } } } render(); if (G.screen === 'race') drawHUD(0); return this.state(); },
+    step(ms) { const n = Math.round((ms || 16) / (DT * 1000)); G.alpha = 1; G.frameDt = DT; for (let i = 0; i < n; i++) { if (G.screen === 'race') readControls(); for (const c of G.race.cars) { c.px = c.x; c.py = c.y; c.ph = c.h; } G.race.step(); if (G.use3D && G.screen === 'race') updateWarnings(DT); checkPhoto(); handleEvents(); recordGhost(); G.race.cars.forEach((c, j) => carFx(c, j, DT)); if (i % 2 === 0) { updateParts(DT * 2); updateCamera(DT * 2); updateTimers(DT * 2); } if (G.screen === 'race' && G.race.player && G.race.player.finished && G.finishShownT > 0) { G.finishShownT -= DT; if (G.finishShownT <= 0) { showResults(); break; } } } render(); if (G.screen === 'race') drawHUD(0); return this.state(); },
     state() {
       const R = G.race; if (!R) return { screen: G.screen };
       return { screen: G.screen, mode: G.mode, track: G.T.name, phase: R.phase, t: +R.raceT.toFixed(2), countdown: R.countdown, fps: Math.round(1000 / G.frameMs), parts: G.parts.length,
@@ -1347,6 +1634,7 @@
     },
     input(o) { G.virt = o ? Object.assign({}, G.virt || {}, o) : null; if (o && o.use) { pressItem(); delete G.virt.use; } return this.state(); },
     autopilot(on) { const p = G.race && G.race.player; if (p) { p.auto = on !== false; if (!p.ai) p.ai = null; } return this.state(); },
+    thumb(x, y) { if (x == null) { ptrs.delete('T'); return; } const q = ptrs.get('T'); if (q) q.x = x; else ptrs.set('T', { role: 'steer', x, y: y || 640, x0: x, t: ++ptrSeq, btn: null }); }, // a scripted thumb (fast bot tests)
     pointers() { return Array.from(ptrs.values()).map((p) => ({ role: p.role, x: Math.round(p.x), y: Math.round(p.y) })); },
     buttons() { return JSON.parse(JSON.stringify(UI.btn)); },
     // full races, headless, every car on AI (no rendering)
@@ -1354,7 +1642,12 @@
     simAll(seeds) { const out = []; for (let t = 0; t < 4; t++) for (let c = 0; c < 3; c++) for (let s = 1; s <= (seeds || 1); s++) { const r = DRD.simRace(t, { cls: c, seed: s * 31 + c }); out.push({ track: r.track, cls: r.cls, seed: s, winner: r.cars[0].finish, last: r.cars[5].finish, bestLap: Math.min(...r.cars.flatMap((x) => x.laps)), worstLap: Math.max(...r.cars.flatMap((x) => x.laps)), respawns: r.cars.reduce((a, x) => a + x.respawns, 0), unfinished: r.cars.filter((x) => x.est).length }); } return out; },
     showResults() { showResults(); return G.screen; },
     goTitle() { goTitle(); return G.screen; },
-    perf(n) { n = n || 60; const t0 = performance.now(); for (let i = 0; i < n; i++) { render(); drawHUD(0); } return +((performance.now() - t0) / n).toFixed(2); },
+    perf(n) { n = n || 60; const t0 = performance.now(); for (let i = 0; i < n; i++) { render(); drawHUD(0); } const gl = G.v3 && G.v3.renderer && G.v3.renderer(); if (gl) gl.getContext().finish(); return +((performance.now() - t0) / n).toFixed(2); },
+    view() { return V3on() ? G.v3.view(G) : { mode: 'top' }; },
+    project(x, y, h) { return V3on() ? G.v3.project(x, y, h || 0) : null; },
+    camMode(m) { return V3on() ? G.v3.camMode(m) : null; },
+    fallback() { fallbackTop(); return G.use3D; },
+    hold(on) { G.hold = on !== false; return G.hold; },
     G, save
   };
 })();

@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="Dirt Road Derby: a top-down item-battle kart racer on Vermont back roads. Drift, boost and toss pinecones.">
+<meta name="description" content="Dirt Road Derby: an item-battle kart racer on Vermont back roads. Drift, boost and toss pinecones.">
 <title>Dirt Road Derby</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -16,12 +16,16 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Barlow:wght@600;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<link rel="modulepreload" href="vendor/three.module.min.js">
+<link rel="modulepreload" href="models3d.js">
+<link rel="modulepreload" href="view3d.js">
 <!-- GoatCounter -->
 <script data-goatcounter="https://btown-brief.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
 <div id="stage">
+  <canvas id="gl"></canvas>
   <canvas id="c"></canvas>
   <button id="pauseBtn" class="pausebtn" aria-label="Pause" hidden><i></i><i></i></button>
 
@@ -31,11 +35,12 @@
       <span class="l2">DERBY</span>
       <span class="flag" aria-hidden="true"></span>
     </div>
-    <div class="tag">top-down item-battle kart racer</div>
+    <div class="tag">item-battle kart racer</div>
     <div class="grow"></div>
     <div class="panel" id="panMain">
       <button id="btnDaily" class="daily"></button>
       <button id="btnRace" class="big primary">RACE!<small id="raceCls"></small></button>
+      <div class="medalcount" id="medalCount" hidden></div>
       <div class="row">
         <button id="btnModes" class="mid">Modes<small>grand prix · tracks · time trial</small></button>
         <button id="btnGarage" class="mid">Garage<small id="garageSub">class · car · paint</small></button>
@@ -52,6 +57,7 @@
       <div class="chips" id="clsChips"></div>
       <div class="rigs" id="rigs"></div>
       <div class="paints" id="paints"></div>
+      <canvas id="garageRig" class="garagerig" width="480" height="180" hidden></canvas>
       <div class="rigname" id="rigName"></div>
       <div class="toggles" id="togglesTitle"></div>
     </div>
@@ -109,5 +115,6 @@
 <script src="art.js"></script>
 <script src="audio.js"></script>
 <script src="game.js"></script>
+<script type="module" src="view3d.js"></script>
 </body>
 </html>
